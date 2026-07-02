@@ -6,7 +6,9 @@ import { config } from "../config";
  */
 export function emailLayout(bodyHtml: string, unsubscribeToken: string): string {
   const cfg = config();
-  const unsubUrl = `${cfg.APP_URL}/unsubscribe?token=${unsubscribeToken}`;
+  // Path-based token: query strings with "=" can be corrupted by
+  // quoted-printable encoding in some email clients.
+  const unsubUrl = `${cfg.APP_URL}/unsubscribe/${unsubscribeToken}`;
   return `<!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background-color:#f6f5f1;">

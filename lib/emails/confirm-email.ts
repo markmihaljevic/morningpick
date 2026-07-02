@@ -2,7 +2,7 @@ import { config } from "../config";
 import { emailLayout } from "./layout";
 
 export function renderConfirmEmail(confirmToken: string, unsubscribeToken: string): string {
-  const url = `${config().APP_URL}/confirm?token=${confirmToken}`;
+  const url = `${config().APP_URL}/confirm/${confirmToken}`;
   const body = `
     <h1 style="font-size:22px;margin:0 0 16px;">Confirm your subscription</h1>
     <p style="margin:0 0 14px;">You (or someone using your email address) signed up for a daily,
