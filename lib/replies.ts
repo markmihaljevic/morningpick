@@ -37,7 +37,8 @@ export function cleanReplyBody(email: ReceivedEmail): string {
 
   // Cut at common quoted-reply markers.
   const markers = [
-    /^On .{5,200} wrote:\s*$/m,
+    // Gmail may wrap "On <date> <sender> wrote:" across two lines.
+    /^On [\s\S]{5,300}? wrote:\s*$/m,
     /^-{2,}\s*Original Message\s*-{2,}/im,
     /^From:\s.+@.+$/m,
     /^_{10,}\s*$/m,
