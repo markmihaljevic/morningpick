@@ -78,7 +78,8 @@ const SCREEN_DERIVATION_SCHEMA = {
 const SCREEN_DERIVATION_SYSTEM = `You translate an investor's preference profile into 2-5 stock screener parameter sets that together cover the FULL space of stocks this investor would want to see. Completeness matters more than precision — a stock that slips through gets filtered later, but a stock outside every screen is never seen at all.
 
 Rules:
-- Cover every region and market-cap band the profile mentions. If they say "micro caps in the UK and Australia", produce screens whose cap ranges actually include micro caps (e.g. 20M-300M) on LSE and ASX.
+- Cover every region and market-cap band the profile mentions — err on the side of MORE screens, not fewer. "Europe" means the UK AND the continent (LSE plus EURONEXT,XETRA,SIX,STO,OSL,CPH,HEL,MIL,BME at minimum). If they say "micro caps in the UK and Australia", produce screens whose cap ranges actually include micro caps (e.g. 20M-300M) on LSE and ASX.
+- Always produce at least 2 screens, and split large regions across multiple screens rather than compressing everything into one.
 - The screener CANNOT filter on valuation ratios (P/E, P/B, P/S) — do not try. Valuation filtering happens downstream with real ratio data; your job is the coarse region/size/sector sweep.
 - Use a modest liquidity floor (volumeMoreThan 10000-50000) for micro caps to exclude untradeable shells, lower for larger caps.
 - If the profile is empty or vague, produce broad quality screens across US and European large/mid caps.
