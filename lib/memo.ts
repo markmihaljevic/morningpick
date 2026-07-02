@@ -45,7 +45,9 @@ export async function generateMemo(args: {
 
   const baseRequest = {
     model: cfg.MEMO_MODEL,
-    max_tokens: 8000,
+    // Generous: adaptive thinking (on by default for claude-sonnet-5) counts
+    // against max_tokens, and a hard-thinking run can exceed 8k total.
+    max_tokens: 16000,
     system: [
       {
         type: "text" as const,

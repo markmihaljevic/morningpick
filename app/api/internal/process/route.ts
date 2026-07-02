@@ -12,7 +12,8 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const MAX_HOPS = 50;
-const SAFETY_MARGIN_MS = 90_000;
+// Don't start a new memo unless at least this much runtime remains.
+const PER_MEMO_RESERVE_MS = 200_000;
 const REPEAT_EXCLUSION_DAYS = 90;
 
 interface DeliveryRow {
@@ -38,43 +39,41 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   const startedAt = Date.now();
-  const deadline = startedAt + maxDuration * 1000 - SAFETY_MARGIN_MS;
   let processed = 0;
 
-  while (Date.now() < deadline) {
-    const { data: batch, error } = await db().rpc("claim_deliveries", {
-      batch: cfg.BATCH_SIZE,
-    });
+  // Claim ONE delivery at a time, and only while enough runtime remains to
+  // finish a full memo before the platform kills the function. Anything left
+  // is picked up by the chained invocation below — nothing is ever claimed
+  // and then abandoned mid-generation.
+  while (Date.now() < startedAt + maxDuration * 1000 - PER_MEMO_RESERVE_MS) {
+    const { data: batch, error } = await db().rpc("claim_deliveries", { batch: 1 });
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    const deliveries = (batch ?? []) as DeliveryRow[];
-    if (deliveries.length === 0) {
+    const delivery = ((batch ?? []) as DeliveryRow[])[0];
+    if (!delivery) {
       return NextResponse.json({ ok: true, processed, done: true });
     }
 
-    for (const delivery of deliveries) {
-      try {
-        await processDelivery(delivery);
-        await db().from("deliveries").update({ status: "sent" }).eq("id", delivery.id);
-        processed++;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        console.error(`Delivery ${delivery.id} failed:`, message);
-        // claim_deliveries already incremented attempts and excludes attempts >= 3.
-        await db()
-          .from("deliveries")
-          .update({
-            status: delivery.attempts >= 3 ? "failed" : "pending",
-            last_error: message.slice(0, 1000),
-          })
-          .eq("id", delivery.id);
-        await logEvent("delivery_failed", {
-          subscriberId: delivery.subscriber_id,
-          payload: { deliveryId: delivery.id, error: message.slice(0, 500) },
-        });
-      }
-      if (Date.now() >= deadline) break;
+    try {
+      await processDelivery(delivery);
+      await db().from("deliveries").update({ status: "sent" }).eq("id", delivery.id);
+      processed++;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`Delivery ${delivery.id} failed:`, message);
+      // claim_deliveries already incremented attempts and excludes attempts >= 3.
+      await db()
+        .from("deliveries")
+        .update({
+          status: delivery.attempts >= 3 ? "failed" : "pending",
+          last_error: message.slice(0, 1000),
+        })
+        .eq("id", delivery.id);
+      await logEvent("delivery_failed", {
+        subscriberId: delivery.subscriber_id,
+        payload: { deliveryId: delivery.id, error: message.slice(0, 500) },
+      });
     }
   }
 
