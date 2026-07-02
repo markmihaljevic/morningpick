@@ -86,9 +86,18 @@ export async function ensureDailyUniverse(date: string): Promise<UniverseEntry[]
     throw new Error("Universe build produced zero candidates — check FMP_API_KEY and screener access.");
   }
 
+  // The same ticker can match several screens; keep the first occurrence
+  // (Postgres rejects duplicate conflict keys within one upsert batch).
+  const seen = new Set<string>();
+  const deduped = rows.filter((r) => {
+    if (seen.has(r.ticker)) return false;
+    seen.add(r.ticker);
+    return true;
+  });
+
   const { error: insertError } = await db()
     .from("daily_universe")
-    .upsert(rows, { onConflict: "universe_date,ticker" });
+    .upsert(deduped, { onConflict: "universe_date,ticker" });
   if (insertError) throw new Error(`daily_universe insert failed: ${insertError.message}`);
 
   return rows.map(({ ticker, snapshot, source }) => ({ ticker, snapshot, source }));

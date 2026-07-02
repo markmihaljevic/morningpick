@@ -7,6 +7,14 @@ import { MEMO_SYSTEM_PROMPT, buildMemoUserPrompt } from "./prompts/memo";
 
 const MAX_CONTINUATIONS = 5;
 
+function safeDomain(url: string): string | null {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
 export interface GeneratedMemo {
   markdown: string;
   title: string;
@@ -68,17 +76,35 @@ export async function generateMemo(args: {
     throw new Error(`Memo generation for ${args.ticker} hit max_tokens — output truncated.`);
   }
 
+  // Cited text arrives as separate text blocks mid-paragraph — join with no
+  // separator to preserve sentence flow, and turn citation metadata into
+  // inline (domain.com) attributions.
   const markdown = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
+    .map((b) => {
+      const domains = [
+        ...new Set(
+          (b.citations ?? [])
+            .map((c) => ("url" in c && c.url ? safeDomain(c.url) : null))
+            .filter((d): d is string => Boolean(d)),
+        ),
+      ];
+      const text = b.text.trim() === "" ? "" : b.text;
+      return domains.length > 0 ? `${text} (${domains.join(", ")})` : text;
+    })
+    .join("")
     .trim();
-  if (!markdown) {
+
+  // Drop any working narration the model emitted before the memo itself —
+  // the deliverable always starts at the H1.
+  const h1Index = markdown.indexOf("# ");
+  const cleaned = h1Index > 0 ? markdown.slice(h1Index) : markdown;
+  if (!cleaned) {
     throw new Error(`Memo generation for ${args.ticker} returned no text.`);
   }
 
-  const heading = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  const heading = cleaned.match(/^#\s+(.+)$/m)?.[1]?.trim();
   const title = heading ?? `${args.ticker} — today's idea`;
 
-  return { markdown, title, model: cfg.MEMO_MODEL };
+  return { markdown: cleaned, title, model: cfg.MEMO_MODEL };
 }

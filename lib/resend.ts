@@ -12,6 +12,11 @@ export function resend(): Resend {
 
 export function fromAddress(): string {
   const cfg = config();
+  // Test mode before a domain is verified: Resend lets you send from
+  // onboarding@resend.dev to your own account email only.
+  if (cfg.EMAIL_DOMAIN === "resend.dev") {
+    return `${cfg.EMAIL_FROM_NAME} <onboarding@resend.dev>`;
+  }
   return `${cfg.EMAIL_FROM_NAME} <memo@${cfg.EMAIL_DOMAIN}>`;
 }
 
