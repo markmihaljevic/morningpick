@@ -1,12 +1,13 @@
 -- Morningpick initial schema
-create extension if not exists citext;
+create schema if not exists extensions;
+create extension if not exists citext with schema extensions;
 
 create type subscriber_status as enum ('pending', 'active', 'unsubscribed', 'bounced');
 create type delivery_status as enum ('pending', 'processing', 'sent', 'failed', 'skipped');
 
 create table subscribers (
   id                uuid primary key default gen_random_uuid(),
-  email             citext not null unique,
+  email             extensions.citext not null unique,
   status            subscriber_status not null default 'pending',
   timezone          text not null default 'Europe/Zurich',
   send_hour_local   smallint not null default 7,
@@ -138,6 +139,13 @@ as $$
   on conflict (budget_date) do update set used = fmp_budget.used + excluded.used
   returning used;
 $$;
+
+-- Only the service role may call the queue/budget functions (they are exposed
+-- via PostgREST RPC otherwise).
+revoke execute on function claim_deliveries(int) from public, anon, authenticated;
+revoke execute on function increment_fmp_budget(int) from public, anon, authenticated;
+grant execute on function claim_deliveries(int) to service_role;
+grant execute on function increment_fmp_budget(int) to service_role;
 
 -- Deny-all RLS: the app accesses these tables exclusively through the
 -- service-role key in server routes. No policies = no anon/authenticated access.

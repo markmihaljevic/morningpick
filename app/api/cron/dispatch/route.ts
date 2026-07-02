@@ -21,13 +21,34 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const universe = await ensureDailyUniverse(today);
 
-  const { data: subscribers, error } = await db()
+  const { data: allActive, error } = await db()
     .from("subscribers")
-    .select("id")
+    .select("id, timezone, send_hour_local")
     .eq("status", "active");
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // daily mode: everyone, at the cron's fixed time (Vercel Hobby compatible).
+  // hourly mode: only subscribers whose local clock matches their send hour
+  // (run the cron every hour on Vercel Pro).
+  const subscribers =
+    cfg.DELIVERY_MODE === "daily"
+      ? allActive
+      : allActive.filter((s) => {
+          try {
+            const localHour = Number(
+              new Intl.DateTimeFormat("en-US", {
+                timeZone: s.timezone,
+                hour: "numeric",
+                hour12: false,
+              }).format(new Date()),
+            );
+            return localHour === s.send_hour_local;
+          } catch {
+            return false; // invalid timezone string — skip rather than crash
+          }
+        });
 
   if (subscribers.length > 0) {
     const rows = subscribers.map((s) => ({ subscriber_id: s.id, delivery_date: today }));

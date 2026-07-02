@@ -23,7 +23,7 @@ export default function Home() {
           researched with live market data and written by AI for <em>your</em> investment style.
         </p>
         <p className="mt-4 text-lg leading-relaxed">
-          Don&apos;t like the pick? <strong>Just reply to the email.</strong> &ldquo;More European
+          Don&apos;t like the pick? <strong>Just reply to the email.</strong>{" "}&ldquo;More European
           small caps.&rdquo; &ldquo;Less tech.&rdquo; &ldquo;I&apos;m a deep value contrarian.&rdquo;
           Tomorrow&apos;s memo listens.
         </p>
