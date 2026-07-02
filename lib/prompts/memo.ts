@@ -1,5 +1,5 @@
 import type { TickerData } from "../fmp";
-import type { Profile } from "../candidates";
+import type { Profile } from "../profile";
 
 // Static system prompt — kept stable so it prompt-caches across subscribers.
 export const MEMO_SYSTEM_PROMPT = `You are a senior equity analyst writing a daily one-stock pitch memo for a single subscriber of an investment idea newsletter.

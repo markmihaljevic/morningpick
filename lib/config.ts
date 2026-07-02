@@ -25,6 +25,9 @@ const envSchema = z.object({
 
   DELIVERY_MODE: z.enum(["daily", "hourly"]).default("daily"),
   BATCH_SIZE: z.coerce.number().int().positive().default(3),
+
+  // Operational alerts (run digest, failed deliveries). Empty = disabled.
+  ADMIN_EMAIL: z.string().email().or(z.literal("")).default(""),
 });
 
 export type Config = z.infer<typeof envSchema>;

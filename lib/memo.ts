@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropic";
 import { config } from "./config";
-import type { Profile } from "./candidates";
+import type { Profile } from "./profile";
 import type { TickerData } from "./fmp";
 import { MEMO_SYSTEM_PROMPT, buildMemoUserPrompt } from "./prompts/memo";
 
@@ -98,9 +98,12 @@ export async function generateMemo(args: {
     .trim();
 
   // Drop any working narration the model emitted before the memo itself —
-  // the deliverable always starts at the H1.
+  // the deliverable always starts at the H1. Also strip literal <cite> tags
+  // the web-search tool sometimes embeds (they'd render as raw HTML in email).
   const h1Index = markdown.indexOf("# ");
-  const cleaned = h1Index > 0 ? markdown.slice(h1Index) : markdown;
+  const cleaned = (h1Index > 0 ? markdown.slice(h1Index) : markdown)
+    .replace(/<cite[^>]*>([\s\S]*?)<\/cite>/g, "$1")
+    .replace(/<\/?antml?[^>]*>/g, "");
   if (!cleaned) {
     throw new Error(`Memo generation for ${args.ticker} returned no text.`);
   }

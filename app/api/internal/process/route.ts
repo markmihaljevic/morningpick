@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { config } from "@/lib/config";
 import { db, logEvent } from "@/lib/db";
-import { selectTicker, type Profile, type UniverseEntry } from "@/lib/candidates";
+import type { Profile } from "@/lib/profile";
+import { getSubscriberScreens, buildCandidatePool, type ScreenParams } from "@/lib/screens";
+import { shortlistCandidates, enrichShortlist, finalSelect } from "@/lib/selection";
+import { sendAdminAlert } from "@/lib/alerts";
 import { fetchTickerData } from "@/lib/fmp";
 import { generateMemo } from "@/lib/memo";
 import { renderMemoEmail } from "@/lib/emails/memo-email";
@@ -63,10 +66,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`Delivery ${delivery.id} failed:`, message);
       // claim_deliveries already incremented attempts and excludes attempts >= 3.
+      const exhausted = delivery.attempts >= 3;
       await db()
         .from("deliveries")
         .update({
-          status: delivery.attempts >= 3 ? "failed" : "pending",
+          status: exhausted ? "failed" : "pending",
           last_error: message.slice(0, 1000),
         })
         .eq("id", delivery.id);
@@ -74,6 +78,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         subscriberId: delivery.subscriber_id,
         payload: { deliveryId: delivery.id, error: message.slice(0, 500) },
       });
+      if (exhausted) {
+        await sendAdminAlert("Delivery permanently FAILED", [
+          `Subscriber ${delivery.subscriber_id} will get NO memo today (${delivery.delivery_date}).`,
+          `All ${delivery.attempts} attempts exhausted. Last error:`,
+          message.slice(0, 1000),
+          ``,
+          `To retry: reset the delivery to pending with attempts=0 and re-kick the worker.`,
+        ]);
+      }
     }
   }
 
@@ -99,7 +112,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 async function processDelivery(delivery: DeliveryRow): Promise<void> {
   const { data: subscriber, error: subError } = await db()
     .from("subscribers")
-    .select("id, email, status, unsubscribe_token, preference_profiles(structured, philosophy)")
+    .select(
+      "id, email, status, unsubscribe_token, preference_profiles(structured, philosophy, version, screens, screens_version)",
+    )
     .eq("id", delivery.subscriber_id)
     .single();
   if (subError) throw new Error(`Subscriber load failed: ${subError.message}`);
@@ -137,14 +152,6 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     ticker = existingMemo.ticker;
     title = existingMemo.title ?? `${ticker} — today's idea`;
   } else {
-    const { data: universeRows, error: universeError } = await db()
-      .from("daily_universe")
-      .select("ticker, snapshot, source")
-      .eq("universe_date", delivery.delivery_date);
-    if (universeError || !universeRows?.length) {
-      throw new Error(`No universe for ${delivery.delivery_date} — dispatch must run first.`);
-    }
-
     const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
       .toISOString()
       .slice(0, 10);
@@ -155,17 +162,26 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       .gte("delivery_date", since)
       .order("delivery_date", { ascending: false });
     const excluded = (recentMemos ?? []).map((m) => m.ticker);
+    const recent = (recentMemos ?? []).slice(0, 10).map((m) => ({ ticker: m.ticker }));
 
-    const selection = await selectTicker(
+    // Profile-aware funnel: derived screens → broad pool → shortlist →
+    // valuation enrichment → final pick.
+    const screens = await getSubscriberScreens(
+      subscriber.id,
       profile,
-      universeRows as UniverseEntry[],
-      excluded,
-      (recentMemos ?? []).slice(0, 10).map((m) => ({ ticker: m.ticker })),
+      (profileRow?.version as number) ?? 0,
+      (profileRow?.screens as ScreenParams[]) ?? [],
+      (profileRow?.screens_version as number) ?? -1,
     );
+    const pool = await buildCandidatePool(screens);
+    const shortlist = await shortlistCandidates(profile, pool, excluded, recent);
+    const enriched = await enrichShortlist(shortlist);
+    const selection = await finalSelect(profile, enriched, recent);
     ticker = selection.ticker;
 
-    const universeEntry = (universeRows as UniverseEntry[]).find((u) => u.ticker === ticker);
-    const companyName = universeEntry?.snapshot?.name as string | undefined;
+    const companyName = pool.find(
+      (c) => c.ticker.toUpperCase() === ticker.toUpperCase(),
+    )?.name;
 
     const data = await fetchTickerData(ticker);
     const memo = await generateMemo({
