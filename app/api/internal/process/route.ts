@@ -1,0 +1,214 @@
+import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
+import { config } from "@/lib/config";
+import { db, logEvent } from "@/lib/db";
+import { selectTicker, type Profile, type UniverseEntry } from "@/lib/candidates";
+import { fetchTickerData } from "@/lib/fmp";
+import { generateMemo } from "@/lib/memo";
+import { renderMemoEmail } from "@/lib/emails/memo-email";
+import { sendEmail, replyAddress } from "@/lib/resend";
+
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
+const MAX_HOPS = 50;
+const SAFETY_MARGIN_MS = 90_000;
+const REPEAT_EXCLUSION_DAYS = 90;
+
+interface DeliveryRow {
+  id: string;
+  subscriber_id: string;
+  delivery_date: string;
+  attempts: number;
+}
+
+/**
+ * Self-reinvoking batch worker. Claims deliveries atomically, generates and
+ * sends memos, and chains a fresh invocation when time runs short.
+ */
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  const cfg = config();
+  if (req.headers.get("authorization") !== `Bearer ${cfg.CRON_SECRET}`) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  const { hop = 0 } = (await req.json().catch(() => ({}))) as { hop?: number };
+  if (hop >= MAX_HOPS) {
+    await logEvent("worker_hop_cap", { payload: { hop } });
+    return NextResponse.json({ ok: false, error: "hop cap reached" });
+  }
+
+  const startedAt = Date.now();
+  const deadline = startedAt + maxDuration * 1000 - SAFETY_MARGIN_MS;
+  let processed = 0;
+
+  while (Date.now() < deadline) {
+    const { data: batch, error } = await db().rpc("claim_deliveries", {
+      batch: cfg.BATCH_SIZE,
+    });
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    const deliveries = (batch ?? []) as DeliveryRow[];
+    if (deliveries.length === 0) {
+      return NextResponse.json({ ok: true, processed, done: true });
+    }
+
+    for (const delivery of deliveries) {
+      try {
+        await processDelivery(delivery);
+        await db().from("deliveries").update({ status: "sent" }).eq("id", delivery.id);
+        processed++;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error(`Delivery ${delivery.id} failed:`, message);
+        // claim_deliveries already incremented attempts and excludes attempts >= 3.
+        await db()
+          .from("deliveries")
+          .update({
+            status: delivery.attempts >= 3 ? "failed" : "pending",
+            last_error: message.slice(0, 1000),
+          })
+          .eq("id", delivery.id);
+        await logEvent("delivery_failed", {
+          subscriberId: delivery.subscriber_id,
+          payload: { deliveryId: delivery.id, error: message.slice(0, 500) },
+        });
+      }
+      if (Date.now() >= deadline) break;
+    }
+  }
+
+  // Time ran short with work possibly remaining — chain a fresh invocation.
+  after(async () => {
+    try {
+      await fetch(`${cfg.APP_URL}/api/internal/process`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${cfg.CRON_SECRET}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ hop: hop + 1 }),
+      });
+    } catch (e) {
+      console.error("Failed to chain worker:", e);
+    }
+  });
+
+  return NextResponse.json({ ok: true, processed, chained: true, hop });
+}
+
+async function processDelivery(delivery: DeliveryRow): Promise<void> {
+  const { data: subscriber, error: subError } = await db()
+    .from("subscribers")
+    .select("id, email, status, unsubscribe_token, preference_profiles(structured, philosophy)")
+    .eq("id", delivery.subscriber_id)
+    .single();
+  if (subError) throw new Error(`Subscriber load failed: ${subError.message}`);
+  if (subscriber.status !== "active") {
+    await db().from("deliveries").update({ status: "skipped" }).eq("id", delivery.id);
+    return;
+  }
+
+  // Idempotency: a memo row may exist from a previous crashed attempt.
+  const { data: existingMemo } = await db()
+    .from("memos")
+    .select("id, content_html, ticker, title, sent_at, reply_address")
+    .eq("subscriber_id", subscriber.id)
+    .eq("delivery_date", delivery.delivery_date)
+    .maybeSingle();
+  if (existingMemo?.sent_at) return; // already sent — just mark delivery done
+
+  const profileRow = Array.isArray(subscriber.preference_profiles)
+    ? subscriber.preference_profiles[0]
+    : subscriber.preference_profiles;
+  const profile: Profile = {
+    structured: (profileRow?.structured as Record<string, unknown>) ?? {},
+    philosophy: (profileRow?.philosophy as string) ?? "",
+  };
+
+  let memoId: string;
+  let html: string;
+  let ticker: string;
+  let title: string;
+
+  if (existingMemo) {
+    // Generated but not sent — reuse it instead of paying for regeneration.
+    memoId = existingMemo.id;
+    html = existingMemo.content_html;
+    ticker = existingMemo.ticker;
+    title = existingMemo.title ?? `${ticker} — today's idea`;
+  } else {
+    const { data: universeRows, error: universeError } = await db()
+      .from("daily_universe")
+      .select("ticker, snapshot, source")
+      .eq("universe_date", delivery.delivery_date);
+    if (universeError || !universeRows?.length) {
+      throw new Error(`No universe for ${delivery.delivery_date} — dispatch must run first.`);
+    }
+
+    const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    const { data: recentMemos } = await db()
+      .from("memos")
+      .select("ticker, delivery_date")
+      .eq("subscriber_id", subscriber.id)
+      .gte("delivery_date", since)
+      .order("delivery_date", { ascending: false });
+    const excluded = (recentMemos ?? []).map((m) => m.ticker);
+
+    const selection = await selectTicker(
+      profile,
+      universeRows as UniverseEntry[],
+      excluded,
+      (recentMemos ?? []).slice(0, 10).map((m) => ({ ticker: m.ticker })),
+    );
+    ticker = selection.ticker;
+
+    const universeEntry = (universeRows as UniverseEntry[]).find((u) => u.ticker === ticker);
+    const companyName = universeEntry?.snapshot?.name as string | undefined;
+
+    const data = await fetchTickerData(ticker);
+    const memo = await generateMemo({
+      profile,
+      ticker,
+      companyName,
+      data,
+      selectionRationale: selection.rationale,
+    });
+    title = memo.title;
+
+    memoId = crypto.randomUUID();
+    html = renderMemoEmail(memo.markdown, subscriber.unsubscribe_token);
+    const { error: memoError } = await db().from("memos").insert({
+      id: memoId,
+      subscriber_id: subscriber.id,
+      delivery_date: delivery.delivery_date,
+      ticker,
+      company_name: companyName ?? null,
+      title,
+      content_md: memo.markdown,
+      content_html: html,
+      model: memo.model,
+      reply_address: replyAddress(memoId),
+    });
+    if (memoError) throw new Error(`Memo insert failed: ${memoError.message}`);
+  }
+
+  const resendId = await sendEmail({
+    to: subscriber.email,
+    subject: title,
+    html,
+    replyTo: replyAddress(memoId),
+    unsubscribeToken: subscriber.unsubscribe_token,
+  });
+
+  await db()
+    .from("memos")
+    .update({ resend_message_id: resendId, sent_at: new Date().toISOString() })
+    .eq("id", memoId);
+  await logEvent("memo_sent", {
+    subscriberId: subscriber.id,
+    payload: { memoId, ticker, resendId },
+  });
+}
