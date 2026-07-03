@@ -35,7 +35,7 @@ export default async function DeskPage({ params }: { params: Promise<{ token: st
 
   const { data: subscriber } = await db()
     .from("subscribers")
-    .select("id, email, status, created_at")
+    .select("id, email, status, created_at, plan")
     .eq("portal_token", token)
     .single();
   if (!subscriber) notFound();
@@ -107,6 +107,27 @@ export default async function DeskPage({ params }: { params: Promise<{ token: st
           Every note your analyst has written for you since {since} — flip through them below.
           Reply to any morning email to refine what lands here next.
         </p>
+        <div className="mt-6">
+          {subscriber.plan === "free" ? (
+            <a
+              href={`/api/upgrade/${token}`}
+              className="inline-block border border-[#B08C3D] bg-[#B08C3D] px-5 py-2 font-mono text-[11px] tracking-[0.15em] text-[#0B1622] transition-colors hover:bg-transparent hover:text-[#B08C3D]"
+            >
+              JOIN THE DESK — DAILY NOTES — $99/MO
+            </a>
+          ) : subscriber.plan === "paid" ? (
+            <span className="font-mono text-[10px] tracking-[0.2em] text-[#5C7183]">
+              <span className="text-[#B08C3D]">● THE DESK</span> · DAILY ·{" "}
+              <a href={`/api/billing/${token}`} className="underline decoration-[#B08C3D]/50 underline-offset-4 hover:text-[#B08C3D]">
+                MANAGE BILLING
+              </a>
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] tracking-[0.2em] text-[#5C7183]">
+              <span className="text-[#B08C3D]">● FOUNDING MEMBER</span> · THE DESK, WITH OUR THANKS
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Deck */}

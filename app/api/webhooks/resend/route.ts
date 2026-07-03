@@ -6,6 +6,8 @@ import { getReceivedEmail } from "@/lib/resend";
 import { isAutoReply, cleanReplyBody, parseReplyTarget } from "@/lib/replies";
 import { interpretFeedback, applyFeedback } from "@/lib/feedback";
 import { answerQuestions } from "@/lib/qa";
+import { isDailyPlan } from "@/lib/billing";
+import { renderUpgradeNudgeEmail } from "@/lib/emails/upgrade-email";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -124,7 +126,7 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
   const senderEmail = (email.from.match(/<([^>]+)>/)?.[1] ?? email.from).toLowerCase().trim();
   const { data: subscriber } = await db()
     .from("subscribers")
-    .select("id, email, status, unsubscribe_token")
+    .select("id, email, status, unsubscribe_token, portal_token, plan")
     .eq(subscriberId ? "id" : "email", subscriberId ?? senderEmail)
     .maybeSingle();
 
@@ -218,8 +220,22 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
   });
 
   // Route questions to the research desk — answered in the same email thread.
+  // The desk answers on the daily plan; free subscribers get a warm nudge.
   let answered = false;
-  if (hasQuestions && !interpretation.is_auto_reply_suspected) {
+  if (hasQuestions && !interpretation.is_auto_reply_suspected && !isDailyPlan(subscriber.plan)) {
+    const { sendEmail } = await import("@/lib/resend");
+    await sendEmail({
+      to: subscriber.email,
+      subject: "Your analyst answers questions on The Desk",
+      html: renderUpgradeNudgeEmail({
+        unsubscribeToken: subscriber.unsubscribe_token,
+        portalToken: subscriber.portal_token,
+        firstQuestion: interpretation.questions[0] ?? "",
+      }),
+      unsubscribeToken: subscriber.unsubscribe_token,
+    });
+    await logEvent("qa_upsell_sent", { subscriberId: subscriber.id });
+  } else if (hasQuestions && !interpretation.is_auto_reply_suspected) {
     const result = await answerQuestions({
       subscriberId: subscriber.id,
       subscriberEmail: subscriber.email,

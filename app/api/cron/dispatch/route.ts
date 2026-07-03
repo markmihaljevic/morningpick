@@ -3,6 +3,7 @@ import { after } from "next/server";
 import { config } from "@/lib/config";
 import { db, logEvent } from "@/lib/db";
 import { sendAdminAlert } from "@/lib/alerts";
+import { isDailyPlan, FREE_DELIVERY_UTC_WEEKDAY } from "@/lib/billing";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -23,11 +24,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const today = new Date().toISOString().slice(0, 10);
 
-    const { data: allActive, error } = await db()
+    const { data: allActiveRaw, error } = await db()
       .from("subscribers")
-      .select("id, timezone, send_hour_local")
+      .select("id, timezone, send_hour_local, plan")
       .eq("status", "active");
     if (error) throw new Error(`Subscriber query failed: ${error.message}`);
+
+    // Free tier = the Monday note. Daily plans (paid, comp) go every weekday.
+    const isFreeDay = new Date().getUTCDay() === FREE_DELIVERY_UTC_WEEKDAY;
+    const allActive = allActiveRaw.filter((s) => isDailyPlan(s.plan) || isFreeDay);
 
     // daily mode: everyone, at the cron's fixed time (Vercel Hobby compatible).
     // hourly mode: only subscribers whose local clock matches their send hour

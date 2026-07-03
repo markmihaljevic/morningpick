@@ -15,6 +15,7 @@ import { extractPitchPrice } from "@/lib/performance";
 import { buildKeyStats } from "@/lib/stats";
 import { buildStreetItems } from "@/lib/street";
 import { discoverPrimarySources } from "@/lib/enrich-sources";
+import { isDailyPlan } from "@/lib/billing";
 import { getCoverageContext, coverageForPrompt, checkFollowupTrigger } from "@/lib/coverage";
 import { sendEmail, replyAddress } from "@/lib/resend";
 
@@ -123,7 +124,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
   const { data: subscriber, error: subError } = await db()
     .from("subscribers")
     .select(
-      "id, email, status, unsubscribe_token, portal_token, preference_profiles(structured, philosophy, version, screens, screens_version)",
+      "id, email, status, unsubscribe_token, portal_token, plan, preference_profiles(structured, philosophy, version, screens, screens_version)",
     )
     .eq("id", delivery.subscriber_id)
     .single();
@@ -168,7 +169,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
 
     // A covered name reporting earnings or moving sharply takes priority over
     // a new idea — analysts follow up on their own calls.
-    const trigger = await checkFollowupTrigger(coverageItems);
+    const trigger = isDailyPlan(subscriber.plan) ? await checkFollowupTrigger(coverageItems) : null;
 
     let memoKind: "idea" | "followup" = "idea";
     let companyName: string | undefined;
@@ -264,6 +265,9 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       markdown: memo.markdown,
       unsubscribeToken: subscriber.unsubscribe_token,
       portalToken: subscriber.portal_token,
+      upgradeUrl: isDailyPlan(subscriber.plan)
+        ? undefined
+        : `${config().APP_URL}/api/upgrade/${subscriber.portal_token}`,
       preparedFor: subscriber.email,
       dateLine,
       stats,

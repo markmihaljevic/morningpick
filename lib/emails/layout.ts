@@ -8,6 +8,8 @@ export interface LayoutArgs {
   unsubscribeToken: string;
   /** Subscriber's desk token — renders the "your research desk" footer link. */
   portalToken?: string;
+  /** Set for free-tier recipients: renders The Desk upgrade band above the footer. */
+  upgradeUrl?: string;
   /** Shown under the masthead, e.g. "PREPARED FOR MARK@EXAMPLE.COM" */
   preparedFor?: string;
   /** Date line in the masthead, e.g. "3 July 2026" */
@@ -61,7 +63,22 @@ export function emailLayout(bodyHtml: string, args: LayoutArgs): string {
       </div>
     </td></tr>
 
-    <!-- Ink footer — bookends the masthead -->
+    ${
+      args.upgradeUrl
+        ? `<!-- Upgrade band — free tier only -->
+    <tr><td style="background-color:${BRAND.paper};border-top:1px solid ${BRAND.rule};padding:16px 30px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td style="vertical-align:middle;">
+          <span style="font-family:${MONO};font-size:10px;letter-spacing:1.5px;color:${BRAND.slate};">FREE MONDAY NOTE · <span style="color:${BRAND.ink};font-weight:700;">THE DESK IS DAILY</span> + Q&amp;A + FOLLOW-UPS</span>
+        </td>
+        <td style="vertical-align:middle;text-align:right;white-space:nowrap;">
+          <a href="${args.upgradeUrl}" style="font-family:${MONO};font-size:10px;letter-spacing:1.5px;color:${BRAND.gold};font-weight:700;text-decoration:none;border-bottom:2px solid ${BRAND.gold};padding-bottom:2px;">UPGRADE&nbsp;→</a>
+        </td>
+      </tr></table>
+    </td></tr>
+    `
+        : ""
+    }<!-- Ink footer — bookends the masthead -->
     <tr><td style="background-color:${BRAND.ink};border-top:3px solid ${BRAND.gold};padding:18px 30px;">
       <p style="margin:0 0 10px;font-family:${MONO};font-size:10px;letter-spacing:1px;color:#8FA0B0;line-height:1.9;">
         <span style="color:${BRAND.gold};font-weight:700;">YOUR ANALYST LISTENS.</span>

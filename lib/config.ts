@@ -36,6 +36,11 @@ const envSchema = z.object({
 
   // A covered name moving this % since its last note triggers a follow-up.
   FOLLOWUP_MOVE_PCT: z.coerce.number().positive().default(15),
+
+  // Stripe (paid tier). All optional — billing routes no-op until configured.
+  STRIPE_SECRET_KEY: z.string().default(""),
+  STRIPE_WEBHOOK_SECRET: z.string().default(""),
+  STRIPE_PRICE_ID: z.string().default(""), // the $99/mo "The Desk" price
 });
 
 export type Config = z.infer<typeof envSchema>;

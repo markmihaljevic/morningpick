@@ -175,13 +175,65 @@ export default async function Home() {
         </div>
       </div>
 
+      {/* Pricing */}
+      <div id="pricing" className="mx-auto max-w-6xl px-6 py-20">
+        <p className="font-mono text-[11px] tracking-[0.25em] text-[#B08C3D]">PLANS</p>
+        <h2 className="mt-3 text-[30px] font-bold tracking-tight sm:text-[38px]">
+          Start with Monday. Upgrade to every morning.
+        </h2>
+        <div className="mt-10 grid max-w-4xl gap-6 sm:grid-cols-2">
+          <div className="border border-white/15 p-8">
+            <p className="font-mono text-[11px] tracking-[0.2em] text-[#8FA0B0]">THE MONDAY NOTE</p>
+            <p className="mt-4 text-[34px] font-bold">
+              Free<span className="ml-2 text-[14px] font-normal text-[#8FA0B0]">forever</span>
+            </p>
+            <ul className="mt-6 space-y-2.5 text-[14px] leading-relaxed text-[#8FA0B0]">
+              <li>One research note every Monday</li>
+              <li>Personalized to your philosophy</li>
+              <li>Fact-checked, chart, sources, PDF</li>
+              <li>Replies still teach your analyst</li>
+            </ul>
+            <a
+              href="#subscribe"
+              className="mt-8 inline-block border border-white/25 px-5 py-2 font-mono text-[11px] tracking-[0.15em] text-[#FBFAF6] transition-colors hover:border-[#B08C3D] hover:text-[#B08C3D]"
+            >
+              START FREE
+            </a>
+          </div>
+          <div className="border border-[#B08C3D] bg-[#10202F] p-8">
+            <p className="font-mono text-[11px] tracking-[0.2em] text-[#B08C3D]">THE DESK</p>
+            <p className="mt-4 text-[34px] font-bold">
+              $99<span className="ml-2 text-[14px] font-normal text-[#8FA0B0]">/ month</span>
+            </p>
+            <ul className="mt-6 space-y-2.5 text-[14px] leading-relaxed text-[#8FA0B0]">
+              <li>
+                <span className="text-[#FBFAF6]">A fresh note every weekday morning</span>
+              </li>
+              <li>Reply with questions — researched answers, in thread</li>
+              <li>Follow-ups when a covered name moves or reports</li>
+              <li>The analyst reads filings and announcements in full</li>
+            </ul>
+            <a
+              href="#subscribe"
+              className="mt-8 inline-block border border-[#B08C3D] bg-[#B08C3D] px-5 py-2 font-mono text-[11px] tracking-[0.15em] text-[#0B1622] transition-colors hover:bg-transparent hover:text-[#B08C3D]"
+            >
+              SUBSCRIBE, THEN UPGRADE
+            </a>
+            <p className="mt-4 font-mono text-[10px] tracking-wide text-[#5C7183]">
+              Subscribe free first — the upgrade link arrives with your note. MOI Global members:
+              enter your member code at checkout.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Footer */}
       <footer className="border-t border-white/10">
         <div className="mx-auto max-w-6xl px-6 py-8">
           <p className="max-w-3xl font-mono text-[10px] leading-relaxed tracking-wide text-[#5C6670]">
             NOT INVESTMENT ADVICE. NOTES ARE AI-GENERATED, FOR INFORMATIONAL AND ENTERTAINMENT
-            PURPOSES ONLY, AND MAY CONTAIN ERRORS. DO YOUR OWN RESEARCH. FREE — UNSUBSCRIBE WITH
-            ONE CLICK, ANY TIME.
+            PURPOSES ONLY, AND MAY CONTAIN ERRORS. DO YOUR OWN RESEARCH. UNSUBSCRIBE WITH ONE
+            CLICK, ANY TIME.
           </p>
         </div>
       </footer>

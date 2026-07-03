@@ -19,6 +19,7 @@ export interface MemoEmailArgs {
   markdown: string;
   unsubscribeToken: string;
   portalToken?: string;
+  upgradeUrl?: string;
   preparedFor?: string;
   dateLine?: string;
   stats?: KeyStat[];
@@ -185,6 +186,7 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
   return emailLayout(sections.join("\n"), {
     unsubscribeToken: args.unsubscribeToken,
     portalToken: args.portalToken,
+    upgradeUrl: args.upgradeUrl,
     preparedFor: args.preparedFor,
     dateLine: args.dateLine,
   });
