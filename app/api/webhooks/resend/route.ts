@@ -8,7 +8,7 @@ import { interpretFeedback, applyFeedback } from "@/lib/feedback";
 import { answerQuestions } from "@/lib/qa";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 interface ResendEvent {
   type: string;

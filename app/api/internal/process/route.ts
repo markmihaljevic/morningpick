@@ -19,11 +19,11 @@ import { getCoverageContext, coverageForPrompt, checkFollowupTrigger } from "@/l
 import { sendEmail, replyAddress } from "@/lib/resend";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 const MAX_HOPS = 300;
 // Don't start a new memo unless at least this much runtime remains.
-const PER_MEMO_RESERVE_MS = 200_000;
+const PER_MEMO_RESERVE_MS = 420_000; // fetch-heavy memos run 4-7 min end to end
 const REPEAT_EXCLUSION_DAYS = 90;
 
 interface DeliveryRow {
