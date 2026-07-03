@@ -37,10 +37,7 @@ export function SignupForm() {
   if (state === "already") {
     return (
       <p className="inline-block border border-[#B08C3D] px-5 py-3.5 font-mono text-[13px] tracking-wide text-[#B08C3D]">
-        YOU'RE ALREADY ON THE LIST —{" "}
-        <a href="/desk" className="underline underline-offset-4">
-          SIGN IN TO OPEN YOUR DESK →
-        </a>
+        ✓ YOU'RE ALREADY ON THE LIST — YOUR NEXT NOTE ARRIVES AS USUAL.
       </p>
     );
   }

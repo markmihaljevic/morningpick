@@ -89,20 +89,12 @@ export default async function Home() {
               MORNING<span className="font-bold">PICK</span>
             </span>
           </div>
-          <div className="flex items-center">
-            <a
-              href="/desk"
-              className="mr-3 px-2 py-1.5 font-mono text-[11px] tracking-[0.15em] text-[#8FA0B0] transition-colors hover:text-[#B08C3D]"
-            >
-              SIGN IN
-            </a>
-            <a
-              href="#subscribe"
-              className="border border-[#B08C3D] px-4 py-1.5 font-mono text-[11px] tracking-[0.15em] text-[#B08C3D] transition-colors hover:bg-[#B08C3D] hover:text-[#0B1622]"
-            >
-              GET THE NOTE
-            </a>
-          </div>
+          <a
+            href="#subscribe"
+            className="border border-[#B08C3D] px-4 py-1.5 font-mono text-[11px] tracking-[0.15em] text-[#B08C3D] transition-colors hover:bg-[#B08C3D] hover:text-[#0B1622]"
+          >
+            GET THE NOTE
+          </a>
         </div>
       </nav>
 

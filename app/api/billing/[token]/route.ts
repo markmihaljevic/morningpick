@@ -23,12 +23,12 @@ export async function GET(
     .eq("portal_token", token)
     .single();
   if (!subscriber || !billingEnabled() || !subscriber.stripe_customer_id) {
-    return NextResponse.redirect(`${cfg.APP_URL}/me/${token}`, 303);
+    return NextResponse.redirect(`${cfg.APP_URL}/`, 303);
   }
 
   const session = await stripe().billingPortal.sessions.create({
     customer: subscriber.stripe_customer_id,
-    return_url: `${cfg.APP_URL}/me/${token}`,
+    return_url: `${cfg.APP_URL}/`,
   });
   return NextResponse.redirect(session.url, 303);
 }

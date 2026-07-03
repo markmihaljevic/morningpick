@@ -18,7 +18,7 @@ const SOURCE_TYPE_LABEL: Record<PrimarySource["type"], string> = {
 export interface MemoEmailArgs {
   markdown: string;
   unsubscribeToken: string;
-  portalToken?: string;
+  billingUrl?: string;
   upgradeUrl?: string;
   preparedFor?: string;
   dateLine?: string;
@@ -185,7 +185,7 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
 
   return emailLayout(sections.join("\n"), {
     unsubscribeToken: args.unsubscribeToken,
-    portalToken: args.portalToken,
+    billingUrl: args.billingUrl,
     upgradeUrl: args.upgradeUrl,
     preparedFor: args.preparedFor,
     dateLine: args.dateLine,

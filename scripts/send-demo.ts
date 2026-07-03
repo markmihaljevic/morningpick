@@ -112,7 +112,6 @@ async function main() {
   const html = renderMemoEmail({
     markdown: memo.markdown,
     unsubscribeToken: subscriber.unsubscribe_token,
-    portalToken: subscriber.portal_token,
     preparedFor: subscriber.email,
     dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
     stats: buildKeyStats(data),

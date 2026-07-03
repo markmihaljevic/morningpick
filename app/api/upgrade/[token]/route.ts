@@ -27,10 +27,10 @@ export async function GET(
     return NextResponse.redirect(`${cfg.APP_URL}/`, 303);
   }
   if (!billingEnabled()) {
-    return NextResponse.redirect(`${cfg.APP_URL}/me/${token}?billing=soon`, 303);
+    return NextResponse.redirect(`${cfg.APP_URL}/#pricing`, 303);
   }
   if (isDailyPlan(subscriber.plan)) {
-    return NextResponse.redirect(`${cfg.APP_URL}/me/${token}`, 303);
+    return NextResponse.redirect(`${cfg.APP_URL}/upgraded`, 303);
   }
 
   // MOI Global members get the partner price automatically — detected by
@@ -46,8 +46,8 @@ export async function GET(
       ? { customer: subscriber.stripe_customer_id }
       : { customer_email: subscriber.email }),
     subscription_data: { metadata: { subscriber_id: subscriber.id } },
-    success_url: `${cfg.APP_URL}/me/${token}?upgraded=1`,
-    cancel_url: `${cfg.APP_URL}/me/${token}`,
+    success_url: `${cfg.APP_URL}/upgraded`,
+    cancel_url: `${cfg.APP_URL}/#pricing`,
   });
 
   return NextResponse.redirect(session.url ?? `${cfg.APP_URL}/me/${token}`, 303);

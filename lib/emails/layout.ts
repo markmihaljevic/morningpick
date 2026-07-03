@@ -6,8 +6,8 @@ const MONO = "Menlo, Consolas, 'Courier New', monospace";
 
 export interface LayoutArgs {
   unsubscribeToken: string;
-  /** Subscriber's desk token — renders the "your research desk" footer link. */
-  portalToken?: string;
+  /** Set for paying subscribers: renders the "Manage billing" footer link. */
+  billingUrl?: string;
   /** Set for free-tier recipients: renders The Desk upgrade band above the footer. */
   upgradeUrl?: string;
   /** Shown under the masthead, e.g. "PREPARED FOR MARK@EXAMPLE.COM" */
@@ -89,8 +89,8 @@ export function emailLayout(bodyHtml: string, args: LayoutArgs): string {
         Not investment advice. This note is AI-generated, for informational and entertainment purposes only,
         and may contain errors. Always do your own research and consider consulting a licensed financial adviser.<br/>
         ${escapeHtml(cfg.POSTAL_ADDRESS)} · <a href="https://morningpick.ai" style="color:#8FA0B0;">morningpick.ai</a>${
-          args.portalToken
-            ? ` · <a href="${cfg.APP_URL}/me/${args.portalToken}" style="color:#8FA0B0;">Your research desk</a>`
+          args.billingUrl
+            ? ` · <a href="${args.billingUrl}" style="color:#8FA0B0;">Manage billing</a>`
             : ""
         } · <a href="${unsubUrl}" style="color:#8FA0B0;">Unsubscribe</a>
       </p>

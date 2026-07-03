@@ -264,7 +264,10 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     html = renderMemoEmail({
       markdown: memo.markdown,
       unsubscribeToken: subscriber.unsubscribe_token,
-      portalToken: subscriber.portal_token,
+      billingUrl:
+        subscriber.plan === "paid"
+          ? `${config().APP_URL}/api/billing/${subscriber.portal_token}`
+          : undefined,
       upgradeUrl: isDailyPlan(subscriber.plan)
         ? undefined
         : `${config().APP_URL}/api/upgrade/${subscriber.portal_token}`,

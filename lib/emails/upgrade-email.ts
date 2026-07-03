@@ -33,7 +33,6 @@ export function renderUpgradeNudgeEmail(args: {
   `;
   return emailLayout(body, {
     unsubscribeToken: args.unsubscribeToken,
-    portalToken: args.portalToken,
     dateLine: "THE DESK",
   });
 }
