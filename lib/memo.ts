@@ -71,22 +71,40 @@ export async function generateMemo(args: {
     ],
     tools: [
       { type: "web_search_20260209" as const, name: "web_search" as const, max_uses: 4 },
+      {
+        type: "web_fetch_20260209" as const,
+        name: "web_fetch" as const,
+        max_uses: 4,
+        // Approximate cap on fetched page text entering the context — cost guard.
+        max_content_tokens: 30000,
+      },
     ],
   };
 
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: userPrompt }];
   let response = await anthropic().messages.create({ ...baseRequest, messages });
 
-  // Accumulate web-search results across the whole turn (including paused
-  // continuations) — they're the URL/title lookup for the sources footer.
+  // Accumulate web-search results and fetched pages across the whole turn
+  // (including paused continuations) — they're the URL/title lookup for the
+  // sources footer and the whitelist for inline links.
   const searchResults = new Map<string, MemoSource>();
   const collectSearchResults = (content: Anthropic.ContentBlock[]) => {
     for (const block of content) {
-      if (block.type !== "web_search_tool_result" || !Array.isArray(block.content)) continue;
-      for (const result of block.content) {
-        if (result.type === "web_search_result" && result.url) {
-          if (!searchResults.has(result.url)) {
-            searchResults.set(result.url, { url: result.url, title: result.title ?? result.url });
+      if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
+        for (const result of block.content) {
+          if (result.type === "web_search_result" && result.url) {
+            if (!searchResults.has(result.url)) {
+              searchResults.set(result.url, { url: result.url, title: result.title ?? result.url });
+            }
+          }
+        }
+      } else if (block.type === "web_fetch_tool_result") {
+        const fetched = block.content;
+        if (fetched && fetched.type === "web_fetch_result" && fetched.url) {
+          if (!searchResults.has(fetched.url)) {
+            const doc = fetched.content;
+            const title = (doc && "title" in doc && doc.title) || safeDomain(fetched.url) || fetched.url;
+            searchResults.set(fetched.url, { url: fetched.url, title: String(title) });
           }
         }
       }

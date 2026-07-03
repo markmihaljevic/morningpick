@@ -69,7 +69,15 @@ export async function answerQuestions(args: {
     max_tokens: 16000,
     output_config: { effort: "high" as const },
     system: [{ type: "text" as const, text: QA_SYSTEM, cache_control: { type: "ephemeral" as const } }],
-    tools: [{ type: "web_search_20260209" as const, name: "web_search" as const, max_uses: 5 }],
+    tools: [
+      { type: "web_search_20260209" as const, name: "web_search" as const, max_uses: 5 },
+      {
+        type: "web_fetch_20260209" as const,
+        name: "web_fetch" as const,
+        max_uses: 3,
+        max_content_tokens: 20000,
+      },
+    ],
   };
   const messages: Anthropic.MessageParam[] = [
     {
