@@ -66,7 +66,7 @@ export async function answerQuestions(args: {
 
   const baseRequest = {
     model: cfg.MEMO_MODEL,
-    max_tokens: 16000,
+    max_tokens: 24000,
     output_config: { effort: "high" as const },
     system: [{ type: "text" as const, text: QA_SYSTEM, cache_control: { type: "ephemeral" as const } }],
     tools: [
