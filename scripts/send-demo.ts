@@ -1,9 +1,10 @@
 /**
- * Generate a memo through the full profile-aware funnel for a real
- * subscriber and SEND it to them as a demo — without touching the memos
- * table or the delivery queue (tomorrow's real run is unaffected).
+ * Generate a note through the full production pipeline (desk editor,
+ * pre-flight, all note kinds) for a real subscriber and SEND it to them as
+ * a demo — without touching the memos table or the delivery queue.
  *
  *   npx tsx scripts/send-demo.ts you@example.com
+ *   FORCE_KIND=review npx tsx scripts/send-demo.ts you@example.com
  */
 import { config as loadEnv } from "dotenv";
 loadEnv({ path: ".env.local" });
@@ -11,9 +12,11 @@ loadEnv({ path: ".env.local" });
 import { writeFileSync } from "fs";
 import { db } from "../lib/db";
 import type { Profile } from "../lib/profile";
-import { getSubscriberScreens, buildCandidatePool, type ScreenParams } from "../lib/screens";
-import { shortlistCandidates, enrichShortlist, finalSelect } from "../lib/selection";
-import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings } from "../lib/fmp";
+import { type ScreenParams } from "../lib/screens";
+import { getCoverageContext, coverageForPrompt } from "../lib/coverage";
+import { decideNote, fallbackNote, type NoteKind } from "../lib/desk-editor";
+import { selectIdeaWithPreflight } from "../lib/select-idea";
+import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "../lib/fmp";
 import { generateVerifiedMemo } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
 import { buildFiveYearChartUrl } from "../lib/chart";
@@ -22,6 +25,8 @@ import { buildKeyStats } from "../lib/stats";
 import { buildStreetItems } from "../lib/street";
 import { discoverPrimarySources } from "../lib/enrich-sources";
 import { sendEmail, replyAddress } from "../lib/resend";
+
+const REPEAT_EXCLUSION_DAYS = 90; // match the worker
 
 async function main() {
   const email = process.argv[2];
@@ -33,7 +38,7 @@ async function main() {
   const { data: subscriber, error } = await db()
     .from("subscribers")
     .select(
-      "id, email, unsubscribe_token, portal_token, preference_profiles(structured, philosophy, version, screens, screens_version)",
+      "id, email, unsubscribe_token, portal_token, plan, preference_profiles(structured, philosophy, version, screens, screens_version)",
     )
     .eq("email", email)
     .single();
@@ -47,83 +52,167 @@ async function main() {
     philosophy: (row?.philosophy as string) ?? "",
   };
 
-  const { data: recentMemos } = await db()
-    .from("memos")
-    .select("ticker")
-    .eq("subscriber_id", subscriber.id)
-    .order("delivery_date", { ascending: false })
-    .limit(30);
-  const recent = (recentMemos ?? []).map((m) => ({ ticker: m.ticker }));
+  const { items: coverageItems, taste } = await getCoverageContext(subscriber.id);
+  const coverage = coverageForPrompt(coverageItems);
 
-  console.error("Deriving screens…");
-  const screens = await getSubscriberScreens(
-    subscriber.id,
-    profile,
-    (row?.version as number) ?? 0,
-    (row?.screens as ScreenParams[]) ?? [],
-    (row?.screens_version as number) ?? -1,
-  );
-  console.error(screens.map((s) => `  • ${s.label}`).join("\n"));
+  let decision =
+    (process.env.FORCE_KIND as NoteKind | undefined) &&
+    ["second_look", "review"].includes(process.env.FORCE_KIND!)
+      ? await fallbackNote({ coverageItems, reason: `forced ${process.env.FORCE_KIND} demo` })
+      : await decideNote({ coverageItems, dailyPlan: true });
+  console.error(`Desk decision: ${decision.kind} — ${decision.reason}`);
 
-  console.error("Building pool…");
-  const pool = await buildCandidatePool(screens);
-  console.error(`Pool: ${pool.length} candidates`);
+  let ticker = "";
+  let companyName: string | undefined;
+  let selectionRationale = decision.reason;
+  let followupContext:
+    | { originalMarkdown: string; originalDate: string; priceThen: number | null; priceNow: number | null; triggerDetail: string }
+    | undefined;
+  let secondLookContext:
+    | { originalMarkdown: string; originalDate: string; development: string }
+    | undefined;
+  let reviewContext:
+    | { book: unknown[]; headlines: Record<string, { date: string; title: string; site: string }[]>; upcomingEarnings: Record<string, string> }
+    | undefined;
+  let data: TickerData | null = null;
+  let memoKind: NoteKind = decision.kind;
 
-  const shortlist = await shortlistCandidates(profile, pool, recent.map((r) => r.ticker), recent);
-  console.error(`Shortlist: ${shortlist.map((c) => c.ticker).join(", ")}`);
+  if (decision.kind === "idea") {
+    const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    const excluded = coverageItems.filter((c) => c.date >= since).map((c) => c.ticker);
+    console.error("Running idea funnel with pre-flight…");
+    const idea = await selectIdeaWithPreflight({
+      subscriberId: subscriber.id,
+      profile,
+      profileVersion: (row?.version as number) ?? 0,
+      storedScreens: (row?.screens as ScreenParams[]) ?? [],
+      storedScreensVersion: (row?.screens_version as number) ?? -1,
+      excluded,
+      recentTickers: coverageItems.slice(0, 10).map((c) => c.ticker),
+      taste,
+    });
+    for (const a of idea.attempts) {
+      console.error(
+        `  preflight ${a.ticker}: ${a.write ? "WRITE" : "PASS"} (${a.expectedConviction}/10 — ${a.reason})`,
+      );
+    }
+    if (!idea.ok) {
+      const failSummary = idea.attempts
+        .map((a) => `${a.ticker} (${a.expectedConviction}/10: ${a.reason})`)
+        .join("; ");
+      decision = await fallbackNote({
+        coverageItems,
+        reason: `today's candidates failed pre-flight: ${failSummary}`,
+      });
+      memoKind = decision.kind;
+      console.error(`Fallback decision: ${decision.kind} — ${decision.reason}`);
+    }
+    if (decision.kind === "idea") {
+      ticker = idea.ticker;
+      companyName = idea.companyName;
+      data = idea.data;
+      selectionRationale = idea.ok
+        ? idea.rationale
+        : `${idea.rationale} — NOTE: pre-flight scored this ${idea.preflight.expectedConviction}/10 (${idea.preflight.reason}); write it with honest conviction, do not oversell.`;
+      console.error(`Selected: ${ticker} — ${selectionRationale}`);
+    }
+  }
 
-  const [enriched, headlines, upcomingEarnings] = await Promise.all([
-    enrichShortlist(shortlist),
-    fetchHeadlines(shortlist.map((c) => c.ticker)),
-    fetchUpcomingEarnings(shortlist.map((c) => c.ticker)),
-  ]);
-  console.error(`Headlines for ${Object.keys(headlines).length} of ${shortlist.length} tickers`);
-  console.error(`Upcoming earnings for ${Object.keys(upcomingEarnings).length} tickers`);
-  const sectorByTicker = new Map(pool.map((c) => [c.ticker.toUpperCase(), c.sector]));
-  const recentWithSectors = recent.map((r) => ({
-    ...r,
-    sector: sectorByTicker.get(r.ticker.toUpperCase()) ?? undefined,
-  }));
-  const selection = await finalSelect(profile, enriched, recentWithSectors, undefined, headlines, upcomingEarnings);
-  console.error(`Selected: ${selection.ticker} — ${selection.rationale}`);
+  if (decision.kind === "followup" && decision.followup) {
+    const trigger = decision.followup;
+    ticker = trigger.ticker;
+    const { data: original } = await db()
+      .from("memos")
+      .select("content_md, company_name")
+      .eq("id", trigger.lastNote.memoId)
+      .single();
+    companyName = original?.company_name ?? undefined;
+    selectionRationale = trigger.detail;
+    followupContext = {
+      originalMarkdown: original?.content_md ?? "(original note unavailable)",
+      originalDate: trigger.lastNote.date,
+      priceThen: trigger.lastNote.pitchPrice,
+      priceNow: trigger.lastNote.priceNow,
+      triggerDetail: trigger.detail,
+    };
+  } else if (decision.kind === "second_look" && decision.ticker && decision.revisit) {
+    ticker = decision.ticker;
+    const { data: original } = await db()
+      .from("memos")
+      .select("content_md, company_name")
+      .eq("id", decision.revisit.memoId)
+      .single();
+    companyName = original?.company_name ?? undefined;
+    selectionRationale = decision.reason;
+    secondLookContext = {
+      originalMarkdown: original?.content_md ?? "(original note unavailable)",
+      originalDate: decision.revisit.date,
+      development: decision.reason,
+    };
+  } else if (decision.kind === "review") {
+    ticker = "REVIEW";
+    selectionRationale = decision.reason;
+    const bookTickers = [...new Set(coverageItems.map((c) => c.ticker))].filter(
+      (t) => t !== "REVIEW",
+    );
+    const [bookHeadlines, bookEarnings] = await Promise.all([
+      fetchHeadlines(bookTickers),
+      fetchUpcomingEarnings(bookTickers, 30),
+    ]);
+    reviewContext = { book: coverage, headlines: bookHeadlines, upcomingEarnings: bookEarnings };
+    data = { book: coverage, headlines: bookHeadlines, upcomingEarnings: bookEarnings } as unknown as TickerData;
+  }
 
-  const companyName = pool.find((c) => c.ticker === selection.ticker)?.name;
-  const [data, primarySources] = await Promise.all([
-    fetchTickerData(selection.ticker),
-    discoverPrimarySources(selection.ticker, companyName ?? selection.ticker),
-  ]);
-  const companyProfile0 = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
+  if (!ticker) throw new Error(`Desk decision '${decision.kind}' resolved no ticker.`);
+  if (!data) data = await fetchTickerData(ticker);
+  const primarySources =
+    memoKind === "review" ? [] : await discoverPrimarySources(ticker, companyName ?? ticker);
+  const companyProfile = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
     | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
     | undefined;
+  const researchLinks =
+    memoKind === "review" ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
   const referenceLinks = [
-    ...buildResearchLinks(selection.ticker, companyName ?? selection.ticker, companyProfile0),
+    ...researchLinks,
     ...primarySources.map((s) => ({ label: s.title, url: s.url })),
   ];
-  console.error(`Primary sources: ${primarySources.map((s) => `[${s.type}] ${s.title}`).join(" | ") || "none cleared the bar"}`);
-  console.error("Generating + fact-checking memo…");
-  const memo = await generateVerifiedMemo({
-    profile,
-    ticker: selection.ticker,
-    companyName,
-    data,
-    selectionRationale: selection.rationale,
-    referenceLinks,
-  });
+  console.error(
+    `Primary sources: ${primarySources.map((s) => `[${s.type}] ${s.title}`).join(" | ") || "none"}`,
+  );
+
+  console.error(`Generating + fact-checking ${memoKind} note…`);
+  const [memo, chartUrl] = await Promise.all([
+    generateVerifiedMemo({
+      profile,
+      ticker,
+      companyName,
+      data,
+      selectionRationale,
+      coverage,
+      followup: followupContext,
+      secondLook: secondLookContext,
+      review: reviewContext,
+      referenceLinks,
+    }),
+    memoKind === "review"
+      ? Promise.resolve(null)
+      : buildFiveYearChartUrl(ticker, companyProfile?.currency),
+  ]);
   console.error(
     `Verification: ${memo.verification.critical_issues.length} critical, ${memo.verification.minor_issues.length} minor issues`,
   );
-
-  const chartUrl = await buildFiveYearChartUrl(selection.ticker, companyProfile0?.currency);
-  console.error(`Chart: ${chartUrl ?? "unavailable"}`);
+  console.error(`Chart: ${chartUrl ?? "none"}`);
 
   const html = renderMemoEmail({
     markdown: memo.markdown,
     unsubscribeToken: subscriber.unsubscribe_token,
     preparedFor: subscriber.email,
     dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
-    stats: buildKeyStats(data),
-    street: buildStreetItems(data),
-    meta: memo.meta,
+    stats: memoKind === "review" ? [] : buildKeyStats(data),
+    street: memoKind === "review" ? [] : buildStreetItems(data),
+    meta: memoKind === "review" ? null : memo.meta,
     primarySources,
     chartUrl,
     sources: memo.sources,

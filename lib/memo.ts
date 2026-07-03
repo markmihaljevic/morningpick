@@ -3,7 +3,13 @@ import { anthropic } from "./anthropic";
 import { config } from "./config";
 import type { Profile } from "./profile";
 import type { TickerData } from "./fmp";
-import { MEMO_SYSTEM_PROMPT, buildMemoUserPrompt, type FollowupContext } from "./prompts/memo";
+import {
+  MEMO_SYSTEM_PROMPT,
+  buildMemoUserPrompt,
+  type FollowupContext,
+  type SecondLookContext,
+  type ReviewContext,
+} from "./prompts/memo";
 import { verifyMemo, type VerificationResult } from "./verify";
 import { editMemo } from "./editor";
 
@@ -42,6 +48,8 @@ export async function generateMemo(args: {
   selectionRationale: string;
   coverage?: unknown[];
   followup?: FollowupContext;
+  secondLook?: SecondLookContext;
+  review?: ReviewContext;
   referenceLinks?: { label: string; url: string }[];
 }): Promise<GeneratedMemo> {
   const cfg = config();
@@ -54,6 +62,8 @@ export async function generateMemo(args: {
     selectionRationale: args.selectionRationale,
     coverage: args.coverage,
     followup: args.followup,
+    secondLook: args.secondLook,
+    review: args.review,
     referenceLinks: args.referenceLinks,
   });
 
@@ -293,6 +303,8 @@ export async function generateVerifiedMemo(args: {
   selectionRationale: string;
   coverage?: unknown[];
   followup?: FollowupContext;
+  secondLook?: SecondLookContext;
+  review?: ReviewContext;
   referenceLinks?: { label: string; url: string }[];
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   let memo = await generateMemo(args);

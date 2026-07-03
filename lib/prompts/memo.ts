@@ -61,6 +61,18 @@ export interface FollowupContext {
   triggerDetail: string;
 }
 
+export interface SecondLookContext {
+  originalMarkdown: string;
+  originalDate: string;
+  development: string; // why this name deserves a second look today
+}
+
+export interface ReviewContext {
+  book: unknown[]; // open calls with live returns (coverageForPrompt shape)
+  headlines: Record<string, { date: string; title: string; site: string }[]>;
+  upcomingEarnings: Record<string, string>;
+}
+
 export function buildMemoUserPrompt(args: {
   profile: Profile;
   ticker: string;
@@ -70,6 +82,8 @@ export function buildMemoUserPrompt(args: {
   selectionRationale: string;
   coverage?: unknown[]; // the analyst's recent notes for this subscriber
   followup?: FollowupContext;
+  secondLook?: SecondLookContext;
+  review?: ReviewContext;
   referenceLinks?: { label: string; url: string }[]; // curated links to weave in inline
 }): string {
   const { profile, ticker, companyName, data, today, selectionRationale } = args;
@@ -82,6 +96,56 @@ ${JSON.stringify(args.coverage)}
 
 `
       : "";
+
+  const secondLookBlock = args.secondLook
+    ? `THIS IS A SECOND LOOK, not a new idea and not a triggered follow-up. You covered this name before; something has developed that deserves deeper work: ${args.secondLook.development}
+
+<your_original_note date="${args.secondLook.originalDate}">
+${args.secondLook.originalMarkdown}
+</your_original_note>
+
+Structure for second looks (markdown, 600–900 words) — replaces the standard structure:
+# ${ticker} — Second look: {what changed, as a hook}
+## What's developed
+The development, with numbers. Why today is the day to re-examine this.
+## Re-underwriting the thesis
+Take your original thesis points one by one: stronger, weaker, or unchanged — against today's data.
+## What the market is missing now
+The current mispricing, if any. If the market has caught up, say so plainly.
+## Risks, updated
+What's changed on the bear side.
+## What I'd watch
+Updated falsifiers and dates.
+
+`
+    : "";
+
+  const reviewBlock = args.review
+    ? `THIS IS A COVERAGE REVIEW — no new pick today. The desk judged today's fresh candidates too weak to pitch honestly, so instead: mark the book to market and earn the subscriber's trust with stewardship. Never apologize for this — a review of open calls IS the work.
+
+<your_open_book note="your open calls with live prices and returns">
+${JSON.stringify(args.review.book)}
+</your_open_book>
+
+<book_headlines note="recent news per covered ticker">
+${JSON.stringify(args.review.headlines)}
+</book_headlines>
+
+<book_calendar note="upcoming earnings dates across covered names">
+${JSON.stringify(args.review.upcomingEarnings)}
+</book_calendar>
+
+Structure for reviews (markdown, 500–800 words) — replaces the standard structure:
+# Your book — {a hook about what this stretch of tape proved or broke}
+## The tape vs the book
+Name by name through the open calls that moved, reported, or made news: what happened, what it means, does the call stand. Skip names where nothing happened (one line for the quiet ones, grouped).
+## What I'd act on
+The single most actionable item in the book today — the strongest add, trim, or watch-closely.
+## The calendar
+Upcoming catalysts across covered names, and what each one would prove or break.
+
+`
+    : "";
 
   const followupBlock = args.followup
     ? `THIS IS A FOLLOW-UP NOTE, not a new idea. Trigger: ${args.followup.triggerDetail}
@@ -118,11 +182,22 @@ ${
           .map((l) => `- ${l.label}: ${l.url}`)
           .join("\n")}\n</reference_links>\n\n`
       : ""
-  }${coverageBlock}${followupBlock}Chosen ticker: ${ticker}${companyName ? ` (${companyName})` : ""}
-${args.followup ? "" : `Why this ticker was selected for them: ${selectionRationale}\n`}
+  }${coverageBlock}${followupBlock}${secondLookBlock}${reviewBlock}${
+    args.review
+      ? ""
+      : `Chosen ticker: ${ticker}${companyName ? ` (${companyName})` : ""}\n`
+  }${args.followup || args.secondLook || args.review ? "" : `Why this ticker was selected for them: ${selectionRationale}\n`}
 <dataset>
 ${JSON.stringify(data)}
 </dataset>
 
-Write today's ${args.followup ? "follow-up " : ""}note on ${ticker}. Use at most 4 web searches (recent news/catalysts only) and at most 4 fetches (reading the primary documents that matter most).`;
+Write today's ${
+    args.review
+      ? "coverage-review note"
+      : args.secondLook
+        ? `second-look note on ${ticker}`
+        : args.followup
+          ? `follow-up note on ${ticker}`
+          : `note on ${ticker}`
+  }. Use at most 4 web searches (recent news/catalysts only) and at most 4 fetches (reading the primary documents that matter most).`;
 }

@@ -3,10 +3,9 @@ import { after } from "next/server";
 import { config } from "@/lib/config";
 import { db, logEvent } from "@/lib/db";
 import type { Profile } from "@/lib/profile";
-import { getSubscriberScreens, buildCandidatePool, type ScreenParams } from "@/lib/screens";
-import { shortlistCandidates, enrichShortlist, finalSelect } from "@/lib/selection";
+import { type ScreenParams } from "@/lib/screens";
 import { sendAdminAlert } from "@/lib/alerts";
-import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings } from "@/lib/fmp";
+import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "@/lib/fmp";
 import { generateVerifiedMemo } from "@/lib/memo";
 import { renderMemoEmail } from "@/lib/emails/memo-email";
 import { buildFiveYearChartUrl } from "@/lib/chart";
@@ -16,7 +15,9 @@ import { buildKeyStats } from "@/lib/stats";
 import { buildStreetItems } from "@/lib/street";
 import { discoverPrimarySources } from "@/lib/enrich-sources";
 import { isDailyPlan } from "@/lib/billing";
-import { getCoverageContext, coverageForPrompt, checkFollowupTrigger } from "@/lib/coverage";
+import { getCoverageContext, coverageForPrompt } from "@/lib/coverage";
+import { decideNote, fallbackNote, type NoteKind } from "@/lib/desk-editor";
+import { selectIdeaWithPreflight } from "@/lib/select-idea";
 import { sendEmail, replyAddress } from "@/lib/resend";
 
 export const runtime = "nodejs";
@@ -153,7 +154,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
 
   let memoId: string;
   let html: string;
-  let ticker: string;
+  let ticker = "";
   let title: string;
 
   if (existingMemo) {
@@ -168,19 +169,67 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     const coverage = coverageForPrompt(coverageItems);
     const firstNote = coverageItems.length === 0;
 
-    // A covered name reporting earnings or moving sharply takes priority over
-    // a new idea — analysts follow up on their own calls.
-    const trigger = isDailyPlan(subscriber.plan) ? await checkFollowupTrigger(coverageItems) : null;
+    // The desk editor decides what kind of note this morning deserves.
+    let decision = await decideNote({ coverageItems, dailyPlan: isDailyPlan(subscriber.plan) });
 
-    let memoKind: "idea" | "followup" = "idea";
+    let memoKind: NoteKind = decision.kind;
     let companyName: string | undefined;
-    let selectionRationale = "";
+    let selectionRationale = decision.reason;
     let followupContext:
       | { originalMarkdown: string; originalDate: string; priceThen: number | null; priceNow: number | null; triggerDetail: string }
       | undefined;
+    let secondLookContext:
+      | { originalMarkdown: string; originalDate: string; development: string }
+      | undefined;
+    let reviewContext:
+      | { book: unknown[]; headlines: Record<string, { date: string; title: string; site: string }[]>; upcomingEarnings: Record<string, string> }
+      | undefined;
+    let data: TickerData | null = null;
 
-    if (trigger) {
-      memoKind = "followup";
+    if (decision.kind === "idea") {
+      const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      const excluded = coverageItems.filter((c) => c.date >= since).map((c) => c.ticker);
+      const idea = await selectIdeaWithPreflight({
+        subscriberId: subscriber.id,
+        profile,
+        profileVersion: (profileRow?.version as number) ?? 0,
+        storedScreens: (profileRow?.screens as ScreenParams[]) ?? [],
+        storedScreensVersion: (profileRow?.screens_version as number) ?? -1,
+        excluded,
+        recentTickers: coverageItems.slice(0, 10).map((c) => c.ticker),
+        taste,
+      });
+
+      if (!idea.ok) {
+        // Both candidates failed pre-flight — steward the book instead.
+        const failSummary = idea.attempts
+          .map((a) => `${a.ticker} (${a.expectedConviction}/10: ${a.reason})`)
+          .join("; ");
+        decision = await fallbackNote({
+          coverageItems,
+          reason: `today's candidates failed pre-flight: ${failSummary}`,
+        });
+        memoKind = decision.kind;
+        await logEvent("preflight_fallback", {
+          subscriberId: subscriber.id,
+          payload: { attempts: idea.attempts, fellBackTo: decision.kind },
+        });
+      }
+
+      if (decision.kind === "idea") {
+        ticker = idea.ticker;
+        companyName = idea.companyName;
+        data = idea.data;
+        selectionRationale = idea.ok
+          ? idea.rationale
+          : `${idea.rationale} — NOTE: pre-flight scored this ${idea.preflight.expectedConviction}/10 (${idea.preflight.reason}); write it with honest conviction, do not oversell.`;
+      }
+    }
+
+    if (decision.kind === "followup" && decision.followup) {
+      const trigger = decision.followup;
       ticker = trigger.ticker;
       const { data: original } = await db()
         .from("memos")
@@ -196,56 +245,49 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
         priceNow: trigger.lastNote.priceNow,
         triggerDetail: trigger.detail,
       };
-    } else {
-      const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
-        .toISOString()
-        .slice(0, 10);
-      const excluded = coverageItems.filter((c) => c.date >= since).map((c) => c.ticker);
-      const recent = coverageItems.slice(0, 10).map((c) => ({ ticker: c.ticker }));
-
-      // Profile-aware funnel: derived screens → broad pool → shortlist →
-      // valuation enrichment → final pick.
-      const screens = await getSubscriberScreens(
-        subscriber.id,
-        profile,
-        (profileRow?.version as number) ?? 0,
-        (profileRow?.screens as ScreenParams[]) ?? [],
-        (profileRow?.screens_version as number) ?? -1,
+    } else if (decision.kind === "second_look" && decision.ticker && decision.revisit) {
+      ticker = decision.ticker;
+      const { data: original } = await db()
+        .from("memos")
+        .select("content_md, company_name")
+        .eq("id", decision.revisit.memoId)
+        .single();
+      companyName = original?.company_name ?? undefined;
+      selectionRationale = decision.reason;
+      secondLookContext = {
+        originalMarkdown: original?.content_md ?? "(original note unavailable)",
+        originalDate: decision.revisit.date,
+        development: decision.reason,
+      };
+    } else if (decision.kind === "review") {
+      ticker = "REVIEW";
+      selectionRationale = decision.reason;
+      const bookTickers = [...new Set(coverageItems.map((c) => c.ticker))].filter(
+        (t) => t !== "REVIEW",
       );
-      const pool = await buildCandidatePool(screens);
-      const shortlist = await shortlistCandidates(profile, pool, excluded, recent, taste);
-      const [enriched, headlines, upcomingEarnings] = await Promise.all([
-        enrichShortlist(shortlist),
-        fetchHeadlines(shortlist.map((c) => c.ticker)),
-        fetchUpcomingEarnings(shortlist.map((c) => c.ticker)),
+      const [bookHeadlines, bookEarnings] = await Promise.all([
+        fetchHeadlines(bookTickers),
+        fetchUpcomingEarnings(bookTickers, 30),
       ]);
-      // Sector variety: resolve recent tickers' sectors from today's pool.
-      const sectorByTicker = new Map(pool.map((c) => [c.ticker.toUpperCase(), c.sector]));
-      const recentWithSectors = recent.map((r) => ({
-        ...r,
-        sector: sectorByTicker.get(r.ticker.toUpperCase()) ?? undefined,
-      }));
-      const selection = await finalSelect(
-        profile,
-        enriched,
-        recentWithSectors,
-        taste,
-        headlines,
-        upcomingEarnings,
-      );
-      ticker = selection.ticker;
-      selectionRationale = selection.rationale;
-      companyName = pool.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase())?.name;
+      reviewContext = {
+        book: coverage,
+        headlines: bookHeadlines,
+        upcomingEarnings: bookEarnings,
+      };
+      data = { book: coverage, headlines: bookHeadlines, upcomingEarnings: bookEarnings } as unknown as TickerData;
     }
 
-    const [data, primarySources] = await Promise.all([
-      fetchTickerData(ticker),
-      discoverPrimarySources(ticker, companyName ?? ticker),
-    ]);
+    if (!ticker) {
+      throw new Error(`Desk decision '${decision.kind}' resolved no ticker — aborting delivery.`);
+    }
+    if (!data) data = await fetchTickerData(ticker);
+    const primarySources =
+      memoKind === "review" ? [] : await discoverPrimarySources(ticker, companyName ?? ticker);
     const companyProfile = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
       | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
       | undefined;
-    const researchLinks = buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
+    const researchLinks =
+      memoKind === "review" ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
     const referenceLinks = [
       ...researchLinks,
       ...primarySources.map((s) => ({ label: s.title, url: s.url })),
@@ -260,13 +302,17 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
         selectionRationale,
         coverage,
         followup: followupContext,
+        secondLook: secondLookContext,
+        review: reviewContext,
         referenceLinks,
       }),
-      buildFiveYearChartUrl(ticker, companyProfile?.currency),
+      memoKind === "review"
+        ? Promise.resolve(null)
+        : buildFiveYearChartUrl(ticker, companyProfile?.currency),
     ]);
     title = memo.title;
-    const stats = buildKeyStats(data);
-    const street = buildStreetItems(data);
+    const stats = memoKind === "review" ? [] : buildKeyStats(data);
+    const street = memoKind === "review" ? [] : buildStreetItems(data);
     const pitch = extractPitchPrice(data);
     const dateLine = new Date(delivery.delivery_date + "T00:00:00Z").toLocaleDateString("en-GB", {
       day: "numeric",
