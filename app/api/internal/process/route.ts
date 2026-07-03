@@ -15,6 +15,7 @@ import { extractPitchPrice } from "@/lib/performance";
 import { buildKeyStats } from "@/lib/stats";
 import { buildStreetItems } from "@/lib/street";
 import { discoverPrimarySources } from "@/lib/enrich-sources";
+import { getCoverageContext, coverageForPrompt, checkFollowupTrigger } from "@/lib/coverage";
 import { sendEmail, replyAddress } from "@/lib/resend";
 
 export const runtime = "nodejs";
@@ -158,36 +159,62 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     ticker = existingMemo.ticker;
     title = existingMemo.title ?? `${ticker} — today's idea`;
   } else {
-    const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
-      .toISOString()
-      .slice(0, 10);
-    const { data: recentMemos } = await db()
-      .from("memos")
-      .select("ticker, delivery_date")
-      .eq("subscriber_id", subscriber.id)
-      .gte("delivery_date", since)
-      .order("delivery_date", { ascending: false });
-    const excluded = (recentMemos ?? []).map((m) => m.ticker);
-    const recent = (recentMemos ?? []).slice(0, 10).map((m) => ({ ticker: m.ticker }));
+    // The analyst's memory: recent notes with live returns + subscriber reactions.
+    const { items: coverageItems, taste } = await getCoverageContext(subscriber.id);
+    const coverage = coverageForPrompt(coverageItems);
 
-    // Profile-aware funnel: derived screens → broad pool → shortlist →
-    // valuation enrichment → final pick.
-    const screens = await getSubscriberScreens(
-      subscriber.id,
-      profile,
-      (profileRow?.version as number) ?? 0,
-      (profileRow?.screens as ScreenParams[]) ?? [],
-      (profileRow?.screens_version as number) ?? -1,
-    );
-    const pool = await buildCandidatePool(screens);
-    const shortlist = await shortlistCandidates(profile, pool, excluded, recent);
-    const enriched = await enrichShortlist(shortlist);
-    const selection = await finalSelect(profile, enriched, recent);
-    ticker = selection.ticker;
+    // A covered name reporting earnings or moving sharply takes priority over
+    // a new idea — analysts follow up on their own calls.
+    const trigger = await checkFollowupTrigger(coverageItems);
 
-    const companyName = pool.find(
-      (c) => c.ticker.toUpperCase() === ticker.toUpperCase(),
-    )?.name;
+    let memoKind: "idea" | "followup" = "idea";
+    let companyName: string | undefined;
+    let selectionRationale = "";
+    let followupContext:
+      | { originalMarkdown: string; originalDate: string; priceThen: number | null; priceNow: number | null; triggerDetail: string }
+      | undefined;
+
+    if (trigger) {
+      memoKind = "followup";
+      ticker = trigger.ticker;
+      const { data: original } = await db()
+        .from("memos")
+        .select("content_md, company_name")
+        .eq("id", trigger.lastNote.memoId)
+        .single();
+      companyName = original?.company_name ?? undefined;
+      selectionRationale = trigger.detail;
+      followupContext = {
+        originalMarkdown: original?.content_md ?? "(original note unavailable)",
+        originalDate: trigger.lastNote.date,
+        priceThen: trigger.lastNote.pitchPrice,
+        priceNow: trigger.lastNote.priceNow,
+        triggerDetail: trigger.detail,
+      };
+    } else {
+      const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      const excluded = coverageItems.filter((c) => c.date >= since).map((c) => c.ticker);
+      const recent = coverageItems.slice(0, 10).map((c) => ({ ticker: c.ticker }));
+
+      // Profile-aware funnel: derived screens → broad pool → shortlist →
+      // valuation enrichment → final pick.
+      const screens = await getSubscriberScreens(
+        subscriber.id,
+        profile,
+        (profileRow?.version as number) ?? 0,
+        (profileRow?.screens as ScreenParams[]) ?? [],
+        (profileRow?.screens_version as number) ?? -1,
+      );
+      const pool = await buildCandidatePool(screens);
+      const shortlist = await shortlistCandidates(profile, pool, excluded, recent, taste);
+      const enriched = await enrichShortlist(shortlist);
+      const selection = await finalSelect(profile, enriched, recent, taste);
+      ticker = selection.ticker;
+      selectionRationale = selection.rationale;
+      companyName = pool.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase())?.name;
+    }
 
     const data = await fetchTickerData(ticker);
     const memo = await generateVerifiedMemo({
@@ -195,7 +222,9 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       ticker,
       companyName,
       data,
-      selectionRationale: selection.rationale,
+      selectionRationale,
+      coverage,
+      followup: followupContext,
     });
     title = memo.title;
 
@@ -243,6 +272,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       content_html: html,
       model: memo.model,
       reply_address: replyAddress(memoId),
+      kind: memoKind,
       pitch_price: pitch.price,
       pitch_currency: pitch.currency,
       extras: { chartUrl, researchLinks, sources: memo.sources, stats, street, meta: memo.meta, primarySources, dateLine },

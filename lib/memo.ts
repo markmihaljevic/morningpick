@@ -3,7 +3,7 @@ import { anthropic } from "./anthropic";
 import { config } from "./config";
 import type { Profile } from "./profile";
 import type { TickerData } from "./fmp";
-import { MEMO_SYSTEM_PROMPT, buildMemoUserPrompt } from "./prompts/memo";
+import { MEMO_SYSTEM_PROMPT, buildMemoUserPrompt, type FollowupContext } from "./prompts/memo";
 import { verifyMemo, type VerificationResult } from "./verify";
 
 const MAX_CONTINUATIONS = 5;
@@ -39,6 +39,8 @@ export async function generateMemo(args: {
   companyName?: string;
   data: TickerData;
   selectionRationale: string;
+  coverage?: unknown[];
+  followup?: FollowupContext;
 }): Promise<GeneratedMemo> {
   const cfg = config();
   const userPrompt = buildMemoUserPrompt({
@@ -48,6 +50,8 @@ export async function generateMemo(args: {
     data: args.data,
     today: new Date().toISOString().slice(0, 10),
     selectionRationale: args.selectionRationale,
+    coverage: args.coverage,
+    followup: args.followup,
   });
 
   const baseRequest = {
@@ -240,6 +244,8 @@ export async function generateVerifiedMemo(args: {
   companyName?: string;
   data: TickerData;
   selectionRationale: string;
+  coverage?: unknown[];
+  followup?: FollowupContext;
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   let memo = await generateMemo(args);
   let verification = await verifyMemo(memo.markdown, args.data);

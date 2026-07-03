@@ -28,6 +28,9 @@ const envSchema = z.object({
 
   // Operational alerts (run digest, failed deliveries). Empty = disabled.
   ADMIN_EMAIL: z.string().email().or(z.literal("")).default(""),
+
+  // A covered name moving this % since its last note triggers a follow-up.
+  FOLLOWUP_MOVE_PCT: z.coerce.number().positive().default(15),
 });
 
 export type Config = z.infer<typeof envSchema>;

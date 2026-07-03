@@ -5,6 +5,7 @@ import { db, logEvent } from "@/lib/db";
 import { getReceivedEmail } from "@/lib/resend";
 import { isAutoReply, cleanReplyBody, parseReplyTarget } from "@/lib/replies";
 import { interpretFeedback, applyFeedback } from "@/lib/feedback";
+import { answerQuestions } from "@/lib/qa";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -178,14 +179,21 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
     .single();
 
   let memoContext: { ticker: string; title: string | null; date: string } | null = null;
+  let memoRow: {
+    ticker: string;
+    title: string | null;
+    content_md: string;
+    delivery_date: string;
+  } | null = null;
   if (memoId) {
     const { data: memo } = await db()
       .from("memos")
-      .select("ticker, title, delivery_date")
+      .select("ticker, title, content_md, delivery_date")
       .eq("id", memoId)
       .single();
     if (memo) {
       memoContext = { ticker: memo.ticker, title: memo.title, date: memo.delivery_date };
+      memoRow = memo;
     }
   }
 
@@ -196,6 +204,9 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
     cleanedBody,
   });
 
+  const hasQuestions =
+    Array.isArray(interpretation.questions) && interpretation.questions.length > 0;
+
   await applyFeedback({
     subscriberId: subscriber.id,
     subscriberEmail: subscriber.email,
@@ -203,7 +214,35 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
     memoId,
     interpretation,
     unsubscribeToken: subscriber.unsubscribe_token,
+    suppressAck: hasQuestions, // the researched answer doubles as the ack
   });
 
-  return NextResponse.json({ ok: true, applied: interpretation.is_investment_feedback });
+  // Route questions to the research desk — answered in the same email thread.
+  let answered = false;
+  if (hasQuestions && !interpretation.is_auto_reply_suspected) {
+    const result = await answerQuestions({
+      subscriberId: subscriber.id,
+      subscriberEmail: subscriber.email,
+      unsubscribeToken: subscriber.unsubscribe_token,
+      memoId,
+      memo: memoRow,
+      questions: interpretation.questions.slice(0, 3),
+      profile: {
+        structured: (profile?.structured as Record<string, unknown>) ?? {},
+        philosophy: (profile?.philosophy as string) ?? "",
+      },
+      feedbackApplied: interpretation.is_investment_feedback,
+      ackSummary: interpretation.ack_summary,
+    });
+    answered = result.sent;
+    if (!result.sent) {
+      console.warn(`QA not sent for ${subscriber.id}: ${result.reason}`);
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    applied: interpretation.is_investment_feedback,
+    answered,
+  });
 }

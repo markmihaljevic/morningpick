@@ -56,11 +56,17 @@ function compactPool(pool: Candidate[]): string {
     .join("\n");
 }
 
+export interface Taste {
+  liked: string[];
+  disliked: string[];
+}
+
 export async function shortlistCandidates(
   profile: Profile,
   pool: Candidate[],
   excludedTickers: string[],
   recentMemos: { ticker: string }[],
+  taste?: Taste,
 ): Promise<Candidate[]> {
   const excluded = new Set(excludedTickers.map((t) => t.toUpperCase()));
   const avoid = Array.isArray(profile.structured?.avoid_tickers)
@@ -100,6 +106,9 @@ export async function shortlistCandidates(
             profile.philosophy || "(none — thoughtful generalist)"
           }\n</subscriber_profile>\n\n` +
           `<recent_memo_tickers>${JSON.stringify(recentMemos.map((m) => m.ticker))}</recent_memo_tickers>\n\n` +
+          (taste && (taste.liked.length || taste.disliked.length)
+            ? `<subscriber_reactions note="They replied positively/negatively to notes on these tickers — weight similar setups accordingly">liked: ${JSON.stringify(taste.liked)} disliked: ${JSON.stringify(taste.disliked)}</subscriber_reactions>\n\n`
+            : "") +
           `<pool format="TICKER|name|sector|marketCapMillionsUSD|exchange|country">\n${compactPool(eligible)}\n</pool>`,
       },
     ],
@@ -145,6 +154,7 @@ export async function finalSelect(
   profile: Profile,
   enriched: EnrichedCandidate[],
   recentMemos: { ticker: string }[],
+  taste?: Taste,
 ): Promise<{ ticker: string; rationale: string }> {
   const response = await anthropic().messages.create({
     model: config().FEEDBACK_MODEL,
@@ -168,6 +178,9 @@ export async function finalSelect(
             profile.philosophy || "(none)"
           }\n</subscriber_profile>\n\n` +
           `<recent_memo_tickers>${JSON.stringify(recentMemos.map((m) => m.ticker))}</recent_memo_tickers>\n\n` +
+          (taste && (taste.liked.length || taste.disliked.length)
+            ? `<subscriber_reactions>liked: ${JSON.stringify(taste.liked)} disliked: ${JSON.stringify(taste.disliked)}</subscriber_reactions>\n\n`
+            : "") +
           `<shortlist>\n${JSON.stringify(enriched)}\n</shortlist>`,
       },
     ],

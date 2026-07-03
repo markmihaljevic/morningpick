@@ -12,6 +12,7 @@ export interface FeedbackInterpretation {
   profile_updates: Record<string, unknown>;
   rewritten_philosophy: string;
   ack_summary: string;
+  questions: string[];
 }
 
 /** Interpret a cleaned reply with Claude (no tools, strict JSON schema). */
@@ -65,6 +66,8 @@ export async function applyFeedback(args: {
   memoId: string | null;
   interpretation: FeedbackInterpretation;
   unsubscribeToken: string;
+  /** When the reply also contains questions, the Q&A answer email doubles as the ack. */
+  suppressAck?: boolean;
 }): Promise<void> {
   const { subscriberId, interpretation } = args;
 
@@ -101,7 +104,7 @@ export async function applyFeedback(args: {
   await logEvent("feedback_applied", { subscriberId, payload: { feedbackId: args.feedbackId } });
 
   // Ack email — throttled to one per subscriber per 6h, never for suspected auto-replies.
-  if (interpretation.is_auto_reply_suspected || !interpretation.ack_summary) return;
+  if (args.suppressAck || interpretation.is_auto_reply_suspected || !interpretation.ack_summary) return;
 
   const sixHoursAgo = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
   const { count } = await db()
