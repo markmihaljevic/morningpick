@@ -21,7 +21,7 @@ import { sendEmail, replyAddress } from "@/lib/resend";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const MAX_HOPS = 50;
+const MAX_HOPS = 300;
 // Don't start a new memo unless at least this much runtime remains.
 const PER_MEMO_RESERVE_MS = 200_000;
 const REPEAT_EXCLUSION_DAYS = 90;
@@ -42,9 +42,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (req.headers.get("authorization") !== `Bearer ${cfg.CRON_SECRET}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const { hop = 0 } = (await req.json().catch(() => ({}))) as { hop?: number };
+  const { hop = 0, chain = 0 } = (await req.json().catch(() => ({}))) as {
+    hop?: number;
+    chain?: number;
+  };
   if (hop >= MAX_HOPS) {
-    await logEvent("worker_hop_cap", { payload: { hop } });
+    await logEvent("worker_hop_cap", { payload: { hop, chain } });
     return NextResponse.json({ ok: false, error: "hop cap reached" });
   }
 
@@ -106,14 +109,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           Authorization: `Bearer ${cfg.CRON_SECRET}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ hop: hop + 1 }),
+        body: JSON.stringify({ hop: hop + 1, chain }),
       });
     } catch (e) {
       console.error("Failed to chain worker:", e);
     }
   });
 
-  return NextResponse.json({ ok: true, processed, chained: true, hop });
+  return NextResponse.json({ ok: true, processed, chained: true, hop, chain });
 }
 
 async function processDelivery(delivery: DeliveryRow): Promise<void> {

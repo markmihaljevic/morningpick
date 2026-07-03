@@ -89,7 +89,10 @@ export async function applyFeedback(args: {
     (profile.structured as Record<string, unknown>) ?? {},
     interpretation.profile_updates ?? {},
   );
-  const { error: updateError } = await db()
+  // Optimistic concurrency: only write against the version we read, so two
+  // near-simultaneous replies can't silently clobber each other. On conflict,
+  // re-apply on top of the fresher profile once.
+  const { data: updatedRows, error: updateError } = await db()
     .from("preference_profiles")
     .update({
       structured: merged,
@@ -97,8 +100,31 @@ export async function applyFeedback(args: {
       version: (profile.version as number) + 1,
       updated_at: new Date().toISOString(),
     })
-    .eq("subscriber_id", subscriberId);
+    .eq("subscriber_id", subscriberId)
+    .eq("version", profile.version as number)
+    .select("subscriber_id");
   if (updateError) throw new Error(`Profile update failed: ${updateError.message}`);
+  if (!updatedRows || updatedRows.length === 0) {
+    const { data: fresh } = await db()
+      .from("preference_profiles")
+      .select("structured, version")
+      .eq("subscriber_id", subscriberId)
+      .single();
+    const remerged = mergeProfileUpdates(
+      (fresh?.structured as Record<string, unknown>) ?? {},
+      interpretation.profile_updates ?? {},
+    );
+    const { error: retryError } = await db()
+      .from("preference_profiles")
+      .update({
+        structured: remerged,
+        philosophy: interpretation.rewritten_philosophy.slice(0, 2000),
+        version: ((fresh?.version as number) ?? 0) + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("subscriber_id", subscriberId);
+    if (retryError) throw new Error(`Profile update retry failed: ${retryError.message}`);
+  }
 
   await db().from("feedback").update({ applied: true }).eq("id", args.feedbackId);
   await logEvent("feedback_applied", { subscriberId, payload: { feedbackId: args.feedbackId } });

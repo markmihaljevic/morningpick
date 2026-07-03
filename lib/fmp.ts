@@ -51,9 +51,17 @@ export async function fmpGet<T = unknown>(
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
   url.searchParams.set("apikey", cfg.FMP_API_KEY);
 
-  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-  if (!res.ok) {
-    throw new Error(`FMP ${endpoint} failed: ${res.status} ${await res.text()}`);
+  // Parallel worker chains create bursty load — retry rate limits and
+  // transient server errors with backoff before failing the delivery.
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+    if (res.ok) break;
+    if (res.status !== 429 && res.status < 500) break; // non-retryable
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+  }
+  if (!res || !res.ok) {
+    throw new Error(`FMP ${endpoint} failed: ${res?.status} ${await res?.text()}`);
   }
   const payload = (await res.json()) as T;
 

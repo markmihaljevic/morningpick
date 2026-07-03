@@ -62,23 +62,26 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       payload: { date: today, subscribers: subscribers.length },
     });
 
-    // Fire-and-forget: kick the worker after this response is sent.
+    // Fire-and-forget: kick N parallel worker chains after this response is
+    // sent. Chains never collide (claim_deliveries uses SKIP LOCKED) and each
+    // exits as soon as the queue is empty, so over-provisioning is harmless.
+    const chains = Math.min(cfg.WORKER_CONCURRENCY, Math.max(subscribers.length, 1));
     after(async () => {
-      try {
-        await fetch(`${cfg.APP_URL}/api/internal/process`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${cfg.CRON_SECRET}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ hop: 0 }),
-        });
-      } catch (e) {
-        console.error("Failed to kick worker:", e);
-      }
+      await Promise.allSettled(
+        Array.from({ length: chains }, (_, chain) =>
+          fetch(`${cfg.APP_URL}/api/internal/process`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${cfg.CRON_SECRET}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ hop: 0, chain }),
+          }).catch((e) => console.error(`Failed to kick worker chain ${chain}:`, e)),
+        ),
+      );
     });
 
-    return NextResponse.json({ ok: true, enqueued: subscribers.length });
+    return NextResponse.json({ ok: true, enqueued: subscribers.length, chains });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await sendAdminAlert("Morning dispatch FAILED", [

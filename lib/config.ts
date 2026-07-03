@@ -24,7 +24,12 @@ const envSchema = z.object({
   POSTAL_ADDRESS: z.string().min(1), // CAN-SPAM footer address
 
   DELIVERY_MODE: z.enum(["daily", "hourly"]).default("daily"),
-  BATCH_SIZE: z.coerce.number().int().positive().default(3),
+
+  // Parallel worker chains kicked per morning run. Each chain processes ~1
+  // memo per invocation and self-reinvokes; the SKIP LOCKED queue makes any
+  // number of chains collision-free. Throughput ≈ chains × 20 memos/hour.
+  // Size against your Anthropic rate limits.
+  WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(100).default(4),
 
   // Operational alerts (run digest, failed deliveries). Empty = disabled.
   ADMIN_EMAIL: z.string().email().or(z.literal("")).default(""),

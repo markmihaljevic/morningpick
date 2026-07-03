@@ -1,5 +1,6 @@
 import { anthropic } from "./anthropic";
 import { config } from "./config";
+import { logEvent } from "./db";
 import type { TickerData } from "./fmp";
 
 export interface VerificationResult {
@@ -88,8 +89,17 @@ export async function verifyMemo(
       minor_issues: parsed.minor_issues ?? [],
     };
   } catch (e) {
-    // Verification must never block a send on its own infrastructure failure.
+    // Verification must never block a send on its own infrastructure failure —
+    // but a fail-open means an UNCHECKED memo shipped, so make it visible in
+    // the daily digest rather than silent.
     console.error("Verification pass errored (fail-open):", e);
+    try {
+      await logEvent("verify_failopen", {
+        payload: { error: e instanceof Error ? e.message.slice(0, 300) : String(e) },
+      });
+    } catch {
+      /* never let telemetry break the pipeline */
+    }
     return { passed: true, critical_issues: [], minor_issues: [] };
   }
 }
