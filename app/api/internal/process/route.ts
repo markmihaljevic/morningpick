@@ -11,6 +11,7 @@ import { generateVerifiedMemo } from "@/lib/memo";
 import { renderMemoEmail } from "@/lib/emails/memo-email";
 import { buildFiveYearChartUrl } from "@/lib/chart";
 import { buildResearchLinks } from "@/lib/research-links";
+import { extractPitchPrice } from "@/lib/performance";
 import { sendEmail, replyAddress } from "@/lib/resend";
 
 export const runtime = "nodejs";
@@ -115,7 +116,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
   const { data: subscriber, error: subError } = await db()
     .from("subscribers")
     .select(
-      "id, email, status, unsubscribe_token, preference_profiles(structured, philosophy, version, screens, screens_version)",
+      "id, email, status, unsubscribe_token, portal_token, preference_profiles(structured, philosophy, version, screens, screens_version)",
     )
     .eq("id", delivery.subscriber_id)
     .single();
@@ -201,10 +202,13 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     const chartUrl = await buildFiveYearChartUrl(ticker, companyProfile?.currency);
     const researchLinks = buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
 
+    const pitch = extractPitchPrice(data);
+
     memoId = crypto.randomUUID();
     html = renderMemoEmail({
       markdown: memo.markdown,
       unsubscribeToken: subscriber.unsubscribe_token,
+      portalToken: subscriber.portal_token,
       chartUrl,
       researchLinks,
       sources: memo.sources,
@@ -220,6 +224,8 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       content_html: html,
       model: memo.model,
       reply_address: replyAddress(memoId),
+      pitch_price: pitch.price,
+      pitch_currency: pitch.currency,
     });
     if (memoError) throw new Error(`Memo insert failed: ${memoError.message}`);
   }

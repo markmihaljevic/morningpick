@@ -23,6 +23,7 @@ function todayKey(): string {
 export async function fmpGet<T = unknown>(
   endpoint: string,
   params: Record<string, string | number> = {},
+  opts: { noCache?: boolean } = {},
 ): Promise<T> {
   const cfg = config();
   const sortedParams = Object.keys(params)
@@ -31,12 +32,14 @@ export async function fmpGet<T = unknown>(
     .join("&");
   const cacheKey = `${endpoint}?${sortedParams}:${todayKey()}`;
 
-  const { data: cached } = await db()
-    .from("fmp_cache")
-    .select("payload")
-    .eq("cache_key", cacheKey)
-    .maybeSingle();
-  if (cached) return cached.payload as T;
+  if (!opts.noCache) {
+    const { data: cached } = await db()
+      .from("fmp_cache")
+      .select("payload")
+      .eq("cache_key", cacheKey)
+      .maybeSingle();
+    if (cached) return cached.payload as T;
+  }
 
   const { data: used, error: budgetError } = await db().rpc("increment_fmp_budget", { n: 1 });
   if (budgetError) throw new Error(`FMP budget check failed: ${budgetError.message}`);
@@ -54,7 +57,9 @@ export async function fmpGet<T = unknown>(
   }
   const payload = (await res.json()) as T;
 
-  await db().from("fmp_cache").upsert({ cache_key: cacheKey, payload });
+  if (!opts.noCache) {
+    await db().from("fmp_cache").upsert({ cache_key: cacheKey, payload });
+  }
   return payload;
 }
 
