@@ -93,11 +93,12 @@ export async function answerQuestions(args: {
     },
   ];
 
-  let response = await anthropic().messages.create({ ...baseRequest, messages });
+  const requestOptions = { timeout: 10 * 60 * 1000 };
+  let response = await anthropic().messages.create({ ...baseRequest, messages }, requestOptions);
   let continuations = 0;
   while (response.stop_reason === "pause_turn" && continuations < MAX_CONTINUATIONS) {
     messages.push({ role: "assistant", content: response.content });
-    response = await anthropic().messages.create({ ...baseRequest, messages });
+    response = await anthropic().messages.create({ ...baseRequest, messages }, requestOptions);
     continuations++;
   }
   if (response.stop_reason === "refusal") {
