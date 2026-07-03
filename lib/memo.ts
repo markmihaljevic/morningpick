@@ -4,6 +4,7 @@ import { config } from "./config";
 import type { Profile } from "./profile";
 import type { TickerData } from "./fmp";
 import { MEMO_SYSTEM_PROMPT, buildMemoUserPrompt } from "./prompts/memo";
+import { verifyMemo, type VerificationResult } from "./verify";
 
 const MAX_CONTINUATIONS = 5;
 
@@ -15,10 +16,16 @@ function safeDomain(url: string): string | null {
   }
 }
 
+export interface MemoSource {
+  url: string;
+  title: string;
+}
+
 export interface GeneratedMemo {
   markdown: string;
   title: string;
   model: string;
+  sources: MemoSource[];
 }
 
 /**
@@ -63,11 +70,29 @@ export async function generateMemo(args: {
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: userPrompt }];
   let response = await anthropic().messages.create({ ...baseRequest, messages });
 
+  // Accumulate web-search results across the whole turn (including paused
+  // continuations) — they're the URL/title lookup for the sources footer.
+  const searchResults = new Map<string, MemoSource>();
+  const collectSearchResults = (content: Anthropic.ContentBlock[]) => {
+    for (const block of content) {
+      if (block.type !== "web_search_tool_result" || !Array.isArray(block.content)) continue;
+      for (const result of block.content) {
+        if (result.type === "web_search_result" && result.url) {
+          if (!searchResults.has(result.url)) {
+            searchResults.set(result.url, { url: result.url, title: result.title ?? result.url });
+          }
+        }
+      }
+    }
+  };
+  collectSearchResults(response.content);
+
   // Server-side web search can pause the turn; resume until end_turn.
   let continuations = 0;
   while (response.stop_reason === "pause_turn" && continuations < MAX_CONTINUATIONS) {
     messages.push({ role: "assistant", content: response.content });
     response = await anthropic().messages.create({ ...baseRequest, messages });
+    collectSearchResults(response.content);
     continuations++;
   }
 
@@ -79,20 +104,27 @@ export async function generateMemo(args: {
   }
 
   // Cited text arrives as separate text blocks mid-paragraph — join with no
-  // separator to preserve sentence flow, and turn citation metadata into
-  // inline (domain.com) attributions.
+  // separator to preserve sentence flow, turn citation metadata into inline
+  // (domain.com) attributions, and collect full source URLs for the footer.
+  const sourceByUrl = new Map<string, MemoSource>();
   const markdown = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => {
-      const domains = [
-        ...new Set(
-          (b.citations ?? [])
-            .map((c) => ("url" in c && c.url ? safeDomain(c.url) : null))
-            .filter((d): d is string => Boolean(d)),
-        ),
-      ];
+      const domains = new Set<string>();
+      for (const c of b.citations ?? []) {
+        if ("url" in c && c.url) {
+          const domain = safeDomain(c.url);
+          if (domain) domains.add(domain);
+          if (!sourceByUrl.has(c.url)) {
+            sourceByUrl.set(c.url, {
+              url: c.url,
+              title: ("title" in c && c.title ? String(c.title) : domain) ?? c.url,
+            });
+          }
+        }
+      }
       const text = b.text.trim() === "" ? "" : b.text;
-      return domains.length > 0 ? `${text} (${domains.join(", ")})` : text;
+      return domains.size > 0 ? `${text} (${[...domains].join(", ")})` : text;
     })
     .join("")
     .trim();
@@ -111,5 +143,65 @@ export async function generateMemo(args: {
   const heading = cleaned.match(/^#\s+(.+)$/m)?.[1]?.trim();
   const title = heading ?? `${args.ticker} — today's idea`;
 
-  return { markdown: cleaned, title, model: cfg.MEMO_MODEL };
+  // Sources = citation metadata, plus any search result whose domain the memo
+  // references inline (the model often paraphrases with "(domain.com)" and no
+  // citation block).
+  const mentionedDomains = new Set(
+    [...cleaned.matchAll(/\(([a-z0-9.-]+\.[a-z]{2,}(?:\.[a-z]{2})?(?:,\s*[a-z0-9.-]+\.[a-z]{2,}(?:\.[a-z]{2})?)*)\)/g)]
+      .flatMap((m) => m[1].split(",").map((d) => d.trim().replace(/^www\./, ""))),
+  );
+  for (const source of searchResults.values()) {
+    const domain = safeDomain(source.url);
+    if (domain && mentionedDomains.has(domain) && !sourceByUrl.has(source.url)) {
+      sourceByUrl.set(source.url, source);
+    }
+  }
+
+  return {
+    markdown: cleaned,
+    title,
+    model: cfg.MEMO_MODEL,
+    sources: [...sourceByUrl.values()].slice(0, 10),
+  };
+}
+
+/**
+ * Generate a memo and fact-check its figures against the dataset. One
+ * critical-issue regeneration attempt (with the auditor's findings fed back);
+ * a second failure throws so the delivery retries/alerts rather than sending
+ * fabricated numbers.
+ */
+export async function generateVerifiedMemo(args: {
+  profile: Profile;
+  ticker: string;
+  companyName?: string;
+  data: TickerData;
+  selectionRationale: string;
+}): Promise<GeneratedMemo & { verification: VerificationResult }> {
+  let memo = await generateMemo(args);
+  let verification = await verifyMemo(memo.markdown, args.data);
+  if (!verification.passed) {
+    console.warn(
+      `Verification found ${verification.critical_issues.length} critical issue(s) for ${args.ticker}; regenerating once.`,
+      verification.critical_issues,
+    );
+    memo = await generateMemo({
+      ...args,
+      selectionRationale:
+        `${args.selectionRationale}\n\nIMPORTANT — a previous draft of this memo contained factual errors ` +
+        `that you must not repeat:\n${verification.critical_issues
+          .map((i) => `- "${i.claim}": ${i.problem}`)
+          .join("\n")}`,
+    });
+    verification = await verifyMemo(memo.markdown, args.data);
+    if (!verification.passed) {
+      throw new Error(
+        `Memo for ${args.ticker} failed fact-verification twice: ${verification.critical_issues
+          .map((i) => i.problem)
+          .join("; ")
+          .slice(0, 500)}`,
+      );
+    }
+  }
+  return { ...memo, verification };
 }

@@ -1,9 +1,19 @@
 import { marked } from "marked";
-import { emailLayout } from "./layout";
+import { emailLayout, escapeHtml } from "./layout";
+import type { MemoSource } from "../memo";
+import type { ResearchLink } from "../research-links";
 
-/** Convert the memo markdown into the full HTML email. */
-export function renderMemoEmail(markdown: string, unsubscribeToken: string): string {
-  const html = marked.parse(markdown, { async: false }) as string;
+export interface MemoEmailArgs {
+  markdown: string;
+  unsubscribeToken: string;
+  chartUrl?: string | null;
+  researchLinks?: ResearchLink[];
+  sources?: MemoSource[];
+}
+
+/** Convert the memo markdown + extras into the full HTML email. */
+export function renderMemoEmail(args: MemoEmailArgs): string {
+  const html = marked.parse(args.markdown, { async: false }) as string;
   // Light inline styling for email clients that ignore <style> blocks.
   const styled = html
     .replace(/<h1>/g, '<h1 style="font-size:24px;line-height:1.3;margin:0 0 16px;">')
@@ -13,5 +23,49 @@ export function renderMemoEmail(markdown: string, unsubscribeToken: string): str
     .replace(/<ol>/g, '<ol style="margin:0 0 14px;padding-left:22px;">')
     .replace(/<ul>/g, '<ul style="margin:0 0 14px;padding-left:22px;">')
     .replace(/<li>/g, '<li style="margin:0 0 6px;">');
-  return emailLayout(styled, unsubscribeToken);
+
+  const sections: string[] = [styled];
+
+  if (args.chartUrl) {
+    sections.push(
+      `<div style="margin:24px 0;">
+        <img src="${args.chartUrl}" alt="5-year price chart" width="600"
+             style="max-width:100%;height:auto;border:1px solid #ddd8cc;" />
+      </div>`,
+    );
+  }
+
+  if (args.researchLinks && args.researchLinks.length > 0) {
+    sections.push(
+      `<div style="margin:28px 0 0;">
+        <p style="margin:0 0 8px;font-family:Helvetica,Arial,sans-serif;font-size:12px;letter-spacing:1.5px;color:#8a8578;">DIG DEEPER</p>
+        <ul style="margin:0 0 14px;padding-left:22px;">
+          ${args.researchLinks
+            .map(
+              (l) =>
+                `<li style="margin:0 0 6px;"><a href="${l.url}" style="color:#b0532a;">${escapeHtml(l.label)}</a></li>`,
+            )
+            .join("\n")}
+        </ul>
+      </div>`,
+    );
+  }
+
+  if (args.sources && args.sources.length > 0) {
+    sections.push(
+      `<div style="margin:20px 0 0;">
+        <p style="margin:0 0 8px;font-family:Helvetica,Arial,sans-serif;font-size:12px;letter-spacing:1.5px;color:#8a8578;">SOURCES CITED</p>
+        <ul style="margin:0 0 14px;padding-left:22px;font-size:13px;color:#8a8578;">
+          ${args.sources
+            .map(
+              (s) =>
+                `<li style="margin:0 0 4px;"><a href="${s.url}" style="color:#8a8578;">${escapeHtml(s.title || s.url)}</a></li>`,
+            )
+            .join("\n")}
+        </ul>
+      </div>`,
+    );
+  }
+
+  return emailLayout(sections.join("\n"), args.unsubscribeToken);
 }

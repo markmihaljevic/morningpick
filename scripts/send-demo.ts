@@ -14,8 +14,10 @@ import type { Profile } from "../lib/profile";
 import { getSubscriberScreens, buildCandidatePool, type ScreenParams } from "../lib/screens";
 import { shortlistCandidates, enrichShortlist, finalSelect } from "../lib/selection";
 import { fetchTickerData } from "../lib/fmp";
-import { generateMemo } from "../lib/memo";
+import { generateVerifiedMemo } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
+import { buildFiveYearChartUrl } from "../lib/chart";
+import { buildResearchLinks } from "../lib/research-links";
 import { sendEmail, replyAddress } from "../lib/resend";
 
 async function main() {
@@ -71,16 +73,33 @@ async function main() {
   const selection = await finalSelect(profile, enriched, recent);
   console.error(`Selected: ${selection.ticker} — ${selection.rationale}`);
 
+  const companyName = pool.find((c) => c.ticker === selection.ticker)?.name;
   const data = await fetchTickerData(selection.ticker);
-  const memo = await generateMemo({
+  console.error("Generating + fact-checking memo…");
+  const memo = await generateVerifiedMemo({
     profile,
     ticker: selection.ticker,
-    companyName: pool.find((c) => c.ticker === selection.ticker)?.name,
+    companyName,
     data,
     selectionRationale: selection.rationale,
   });
+  console.error(
+    `Verification: ${memo.verification.critical_issues.length} critical, ${memo.verification.minor_issues.length} minor issues`,
+  );
 
-  const html = renderMemoEmail(memo.markdown, subscriber.unsubscribe_token);
+  const companyProfile = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
+    | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
+    | undefined;
+  const chartUrl = await buildFiveYearChartUrl(selection.ticker, companyProfile?.currency);
+  console.error(`Chart: ${chartUrl ?? "unavailable"}`);
+
+  const html = renderMemoEmail({
+    markdown: memo.markdown,
+    unsubscribeToken: subscriber.unsubscribe_token,
+    chartUrl,
+    researchLinks: buildResearchLinks(selection.ticker, companyName ?? selection.ticker, companyProfile),
+    sources: memo.sources,
+  });
   const htmlPath = process.env.DEMO_HTML_OUT;
   if (htmlPath) {
     writeFileSync(htmlPath, html);

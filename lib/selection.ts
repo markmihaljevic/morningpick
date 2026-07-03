@@ -80,7 +80,7 @@ export async function shortlistCandidates(
 
   const response = await anthropic().messages.create({
     model: config().FEEDBACK_MODEL,
-    max_tokens: 2000,
+    max_tokens: 6000,
     output_config: {
       format: { type: "json_schema", schema: SHORTLIST_SCHEMA },
       effort: "low",
@@ -147,7 +147,7 @@ export async function finalSelect(
 ): Promise<{ ticker: string; rationale: string }> {
   const response = await anthropic().messages.create({
     model: config().FEEDBACK_MODEL,
-    max_tokens: 1500,
+    max_tokens: 6000,
     output_config: {
       format: { type: "json_schema", schema: FINAL_SCHEMA },
       effort: "medium",
@@ -180,8 +180,11 @@ export async function finalSelect(
   if (!valid) {
     return { ticker: enriched[0].ticker, rationale: "Fallback: first shortlisted candidate." };
   }
-  // Occasionally the JSON string value carries trailing markup junk — strip it.
+  // Structured-output string values occasionally carry JSON-glitch garbage
+  // (stray quotes/braces followed by model self-talk). Cut at the first
+  // glitch marker, then strip residual markup and trailing junk.
   const rationale = (parsed.rationale ?? "")
+    .split(/[”"]\}|\}\}|<\/?[a-z]/i)[0]
     .replace(/<[^>]*>/g, "")
     .replace(/[”"'}\]>\-\s]+$/g, "")
     .trim();

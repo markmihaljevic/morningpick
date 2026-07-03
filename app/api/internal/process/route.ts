@@ -7,8 +7,10 @@ import { getSubscriberScreens, buildCandidatePool, type ScreenParams } from "@/l
 import { shortlistCandidates, enrichShortlist, finalSelect } from "@/lib/selection";
 import { sendAdminAlert } from "@/lib/alerts";
 import { fetchTickerData } from "@/lib/fmp";
-import { generateMemo } from "@/lib/memo";
+import { generateVerifiedMemo } from "@/lib/memo";
 import { renderMemoEmail } from "@/lib/emails/memo-email";
+import { buildFiveYearChartUrl } from "@/lib/chart";
+import { buildResearchLinks } from "@/lib/research-links";
 import { sendEmail, replyAddress } from "@/lib/resend";
 
 export const runtime = "nodejs";
@@ -184,7 +186,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     )?.name;
 
     const data = await fetchTickerData(ticker);
-    const memo = await generateMemo({
+    const memo = await generateVerifiedMemo({
       profile,
       ticker,
       companyName,
@@ -193,8 +195,20 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     });
     title = memo.title;
 
+    const companyProfile = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
+      | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
+      | undefined;
+    const chartUrl = await buildFiveYearChartUrl(ticker, companyProfile?.currency);
+    const researchLinks = buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
+
     memoId = crypto.randomUUID();
-    html = renderMemoEmail(memo.markdown, subscriber.unsubscribe_token);
+    html = renderMemoEmail({
+      markdown: memo.markdown,
+      unsubscribeToken: subscriber.unsubscribe_token,
+      chartUrl,
+      researchLinks,
+      sources: memo.sources,
+    });
     const { error: memoError } = await db().from("memos").insert({
       id: memoId,
       subscriber_id: subscriber.id,

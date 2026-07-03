@@ -23,7 +23,7 @@ export async function interpretFeedback(args: {
 }): Promise<FeedbackInterpretation> {
   const response = await anthropic().messages.create({
     model: config().FEEDBACK_MODEL,
-    max_tokens: 2000,
+    max_tokens: 6000,
     output_config: {
       format: { type: "json_schema", schema: FEEDBACK_SCHEMA },
       effort: "medium",
