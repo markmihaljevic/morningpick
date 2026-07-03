@@ -65,10 +65,10 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
       ...args.meta.style_tags.map(
         (t) => `<span style="color:${BRAND.paper};">${escapeHtml(t.toUpperCase())}</span>`,
       ),
-    ];
+    ].map((p) => `<span style="white-space:nowrap;">${p}</span>`);
     headerParts.push(
-      `<div style="background-color:${BRAND.ink};padding:9px 14px;margin:2px 0 14px;">
-        <span style="font-family:${MONO};font-size:10.5px;letter-spacing:1.5px;color:#8FA0B0;">${parts.join('&nbsp;&nbsp;<span style="color:#3D4F60;">|</span>&nbsp;&nbsp;')}</span>
+      `<div style="background-color:${BRAND.ink};padding:8px 14px;margin:2px 0 14px;">
+        <span style="font-family:${MONO};font-size:10.5px;letter-spacing:1.5px;line-height:2;color:#8FA0B0;">${parts.join('<span style="color:#3D4F60;">&nbsp;&nbsp;|&nbsp;&nbsp;</span>')}</span>
       </div>`,
     );
   }

@@ -30,14 +30,37 @@ export async function buildFiveYearChartUrl(
     for (const r of asc) byMonth.set(r.date.slice(0, 7), r); // last row of each month wins
     const monthly = [...byMonth.values()];
 
-    // Year labels only at January (or the first point) — sparse, editorial.
-    const labels = monthly.map((r, i) => {
+    // Year labels only at January boundaries — evenly spaced, like a Google
+    // Finance chart (an extra label at the ragged first month skews spacing).
+    const labels = monthly.map((r) => {
       const [year, month] = r.date.split("-");
-      return month === "01" || i === 0 ? year : "";
+      return month === "01" ? year : "";
     });
     const prices = monthly.map((r) => r.price);
     const last = prices[prices.length - 1];
     const lastFmt = last >= 100 ? last.toFixed(0) : last.toFixed(2);
+
+    // Fit the y-axis to the data (Google Finance style). QuickChart ignores
+    // stepSize and always includes the bounds as labelled ticks, so the only
+    // lever is the bounds themselves: snap them to a nice step, then grow the
+    // max until the renderer's own tick step (≈ nice(range/8)) divides both
+    // bounds — otherwise a crowded off-step label appears at the top.
+    const nice = (x: number) => {
+      const p = Math.pow(10, Math.floor(Math.log10(x)));
+      const f = x / p;
+      return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+    };
+    const dataMin = Math.min(...prices);
+    const dataMax = Math.max(...prices);
+    const span = Math.max(dataMax - dataMin, dataMax * 0.05, 1e-6);
+    const step = nice(span / 5);
+    const yMin = Math.max(0, Math.floor((dataMin - span * 0.05) / step) * step);
+    let yMax = Math.ceil((dataMax + span * 0.05) / step) * step;
+    for (let i = 0; i < 4; i++) {
+      const auto = nice((yMax - yMin) / 8);
+      if (yMin % auto === 0 && (yMax - yMin) % auto === 0) break;
+      yMax += step;
+    }
 
     const res = await fetch("https://quickchart.io/chart/create", {
       method: "POST",
@@ -60,7 +83,7 @@ export async function buildFiveYearChartUrl(
                 borderColor: BRAND.ink,
                 borderWidth: 1.75,
                 pointRadius: 0,
-                fill: true,
+                fill: "start",
                 backgroundColor: "rgba(176, 140, 61, 0.12)",
                 tension: 0,
               },
@@ -99,11 +122,11 @@ export async function buildFiveYearChartUrl(
                 },
               },
               y: {
-                position: "right",
+                min: yMin,
+                max: yMax,
                 border: { display: false },
                 grid: { color: "rgba(16, 32, 47, 0.08)", drawTicks: false },
                 ticks: {
-                  maxTicksLimit: 5,
                   color: BRAND.slate,
                   font: { family: "Helvetica", size: 10 },
                   padding: 6,

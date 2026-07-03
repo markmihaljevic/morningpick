@@ -224,8 +224,10 @@ export async function extractMemoMeta(markdown: string): Promise<MemoMeta | null
       },
       system:
         "You distill a finished investment memo into its verdict block. Be honest — conviction " +
-        "reflects the memo's own risk discussion, not salesmanship. The one-liner should make a " +
-        "busy reader stop scrolling.",
+        "reflects the memo's own risk discussion, not salesmanship. Calibrate the 1-10 scale: " +
+        "8-10 table-pounding asymmetry, 6-7 a solid pick with real caveats, 5 and below a " +
+        "cautionary or watchlist note. Score the risk/reward the memo actually argues, at " +
+        "today's price. The one-liner should make a busy reader stop scrolling.",
       messages: [{ role: "user", content: `<memo>\n${markdown}\n</memo>` }],
     });
     if (response.stop_reason === "refusal") return null;

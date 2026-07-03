@@ -1,7 +1,7 @@
 import { config } from "../config";
 import { BRAND, TAGLINE } from "../brand";
 
-const CANVAS = "#0B1622"; // page background — matches the website
+const CANVAS = "#FFFFFF"; // clean white canvas — the note carries the brand
 const MONO = "Menlo, Consolas, 'Courier New', monospace";
 
 export interface LayoutArgs {
@@ -28,7 +28,7 @@ export function emailLayout(bodyHtml: string, args: LayoutArgs): string {
 <tr><td align="center" style="padding:28px 12px 40px;">
 
   <!-- The note -->
-  <table role="presentation" width="700" cellpadding="0" cellspacing="0" style="max-width:700px;width:100%;border-collapse:collapse;">
+  <table role="presentation" width="700" cellpadding="0" cellspacing="0" style="max-width:700px;width:100%;border-collapse:collapse;border:1px solid ${BRAND.rule};">
 
     <!-- Masthead -->
     <tr><td style="background-color:${BRAND.ink};border-bottom:3px solid ${BRAND.gold};padding:20px 30px;">
