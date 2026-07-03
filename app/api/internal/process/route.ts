@@ -166,6 +166,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     // The analyst's memory: recent notes with live returns + subscriber reactions.
     const { items: coverageItems, taste } = await getCoverageContext(subscriber.id);
     const coverage = coverageForPrompt(coverageItems);
+    const firstNote = coverageItems.length === 0;
 
     // A covered name reporting earnings or moving sharply takes priority over
     // a new idea — analysts follow up on their own calls.
@@ -263,6 +264,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     memoId = crypto.randomUUID();
     html = renderMemoEmail({
       markdown: memo.markdown,
+      firstNote,
       unsubscribeToken: subscriber.unsubscribe_token,
       billingUrl:
         subscriber.plan === "paid"

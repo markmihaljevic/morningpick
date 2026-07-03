@@ -1,4 +1,6 @@
+import { after } from "next/server";
 import { db, logEvent } from "./db";
+import { config } from "./config";
 import { sendEmail, replyAddress } from "./resend";
 import { renderWelcomeEmail } from "./emails/welcome-email";
 
@@ -28,13 +30,40 @@ export async function confirmSubscriber(token: string): Promise<"confirmed" | "i
   try {
     await sendEmail({
       to: subscriber.email,
-      subject: "Welcome — your first memo arrives tomorrow morning",
+      subject: "Welcome — your first note is being written right now",
       html: renderWelcomeEmail(subscriber.unsubscribe_token),
       replyTo: replyAddress(`welcome-${subscriber.id}`),
       unsubscribeToken: subscriber.unsubscribe_token,
     });
   } catch (e) {
     console.error("Welcome email failed:", e);
+  }
+
+  // Instant first note: enqueue today's delivery and kick one worker chain.
+  // Activation beats cadence — a free subscriber confirming on a Tuesday
+  // should not wait six days to see the product.
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    await db()
+      .from("deliveries")
+      .upsert([{ subscriber_id: subscriber.id, delivery_date: today }], {
+        onConflict: "subscriber_id,delivery_date",
+        ignoreDuplicates: true,
+      });
+    const cfg = config();
+    after(async () => {
+      await fetch(`${cfg.APP_URL}/api/internal/process`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${cfg.CRON_SECRET}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ hop: 0, chain: 99 }),
+      }).catch((e) => console.error("First-note worker kick failed:", e));
+    });
+    await logEvent("first_note_enqueued", { subscriberId: subscriber.id });
+  } catch (e) {
+    console.error("First-note enqueue failed (subscriber will get the next scheduled run):", e);
   }
   return "confirmed";
 }

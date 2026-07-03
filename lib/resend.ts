@@ -1,5 +1,6 @@
 import { Resend } from "resend";
 import { config } from "./config";
+import { htmlToText } from "./emails/text-part";
 
 let client: Resend | null = null;
 
@@ -45,6 +46,8 @@ export async function sendEmail(args: SendEmailArgs): Promise<string> {
     to: args.to,
     subject: args.subject,
     html: args.html,
+    // Plain-text alternative part — HTML-only mail is a spam-filter signal.
+    text: htmlToText(args.html),
     replyTo: args.replyTo,
     headers,
   });

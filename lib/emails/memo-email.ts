@@ -17,6 +17,8 @@ const SOURCE_TYPE_LABEL: Record<PrimarySource["type"], string> = {
 
 export interface MemoEmailArgs {
   markdown: string;
+  /** True for a subscriber's very first note — renders the blank-slate intro. */
+  firstNote?: boolean;
   unsubscribeToken: string;
   billingUrl?: string;
   upgradeUrl?: string;
@@ -55,6 +57,15 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     .replace(/<a href=/g, `<a style="color:${BRAND.gold};font-weight:700;text-decoration:underline;text-decoration-color:${BRAND.rule};" href=`);
 
   const sections: string[] = [];
+
+  if (args.firstNote) {
+    sections.push(
+      `<div style="border:1px solid ${BRAND.gold};padding:12px 16px;margin:0 0 20px;">
+        <span style="font-family:${MONO};font-size:10px;letter-spacing:1.5px;color:${BRAND.gold};font-weight:700;">YOUR FIRST NOTE</span>
+        <span style="font-family:${BRAND.sans};font-size:12.5px;color:${BRAND.slate};"> — written before knowing you. Reply and tell your analyst how you invest; every note from here on adapts.</span>
+      </div>`,
+    );
+  }
 
   // ── Header block, injected after the H1 ─────────────────────────────────
   const headerParts: string[] = [];
