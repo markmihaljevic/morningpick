@@ -1,4 +1,5 @@
 import { SignupForm } from "./signup-form";
+import { DeskLink } from "./desk-link";
 import { getPipelineStats } from "@/lib/pipeline-stats";
 
 export const revalidate = 3600;
@@ -89,12 +90,15 @@ export default async function Home() {
               MORNING<span className="font-bold">PICK</span>
             </span>
           </div>
-          <a
-            href="#subscribe"
-            className="border border-[#B08C3D] px-4 py-1.5 font-mono text-[11px] tracking-[0.15em] text-[#B08C3D] transition-colors hover:bg-[#B08C3D] hover:text-[#0B1622]"
-          >
-            GET THE NOTE
-          </a>
+          <div className="flex items-center">
+            <DeskLink />
+            <a
+              href="#subscribe"
+              className="border border-[#B08C3D] px-4 py-1.5 font-mono text-[11px] tracking-[0.15em] text-[#B08C3D] transition-colors hover:bg-[#B08C3D] hover:text-[#0B1622]"
+            >
+              GET THE NOTE
+            </a>
+          </div>
         </div>
       </nav>
 

@@ -6,6 +6,8 @@ const MONO = "Menlo, Consolas, 'Courier New', monospace";
 
 export interface LayoutArgs {
   unsubscribeToken: string;
+  /** Subscriber's desk token — renders the "your research desk" footer link. */
+  portalToken?: string;
   /** Shown under the masthead, e.g. "PREPARED FOR MARK@EXAMPLE.COM" */
   preparedFor?: string;
   /** Date line in the masthead, e.g. "3 July 2026" */
@@ -69,7 +71,11 @@ export function emailLayout(bodyHtml: string, args: LayoutArgs): string {
       <p style="margin:0;font-family:${BRAND.sans};font-size:10px;color:#5C7183;line-height:1.7;">
         Not investment advice. This note is AI-generated, for informational and entertainment purposes only,
         and may contain errors. Always do your own research and consider consulting a licensed financial adviser.<br/>
-        ${escapeHtml(cfg.POSTAL_ADDRESS)} · <a href="https://morningpick.ai" style="color:#8FA0B0;">morningpick.ai</a> · <a href="${unsubUrl}" style="color:#8FA0B0;">Unsubscribe</a>
+        ${escapeHtml(cfg.POSTAL_ADDRESS)} · <a href="https://morningpick.ai" style="color:#8FA0B0;">morningpick.ai</a>${
+          args.portalToken
+            ? ` · <a href="${cfg.APP_URL}/me/${args.portalToken}" style="color:#8FA0B0;">Your research desk</a>`
+            : ""
+        } · <a href="${unsubUrl}" style="color:#8FA0B0;">Unsubscribe</a>
       </p>
     </td></tr>
 
