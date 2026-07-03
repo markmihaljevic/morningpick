@@ -50,9 +50,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   let subscriber = existing;
   if (!subscriber) {
+    const { data: moiRow } = await db()
+      .from("moi_members")
+      .select("email")
+      .eq("email", email)
+      .maybeSingle();
     const { data: created, error } = await db()
       .from("subscribers")
-      .insert({ email })
+      .insert({ email, moi_member: Boolean(moiRow) })
       .select("id, status, confirm_token, unsubscribe_token")
       .single();
     if (error) {

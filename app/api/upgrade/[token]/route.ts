@@ -20,7 +20,7 @@ export async function GET(
 
   const { data: subscriber } = await db()
     .from("subscribers")
-    .select("id, email, plan, stripe_customer_id")
+    .select("id, email, plan, stripe_customer_id, moi_member")
     .eq("portal_token", token)
     .single();
   if (!subscriber) {
@@ -33,9 +33,13 @@ export async function GET(
     return NextResponse.redirect(`${cfg.APP_URL}/me/${token}`, 303);
   }
 
+  // MOI Global members get the partner price automatically — detected by
+  // their member email, nothing to type at checkout.
+  const price =
+    subscriber.moi_member && cfg.STRIPE_PRICE_ID_MOI ? cfg.STRIPE_PRICE_ID_MOI : cfg.STRIPE_PRICE_ID;
   const session = await stripe().checkout.sessions.create({
     mode: "subscription",
-    line_items: [{ price: cfg.STRIPE_PRICE_ID, quantity: 1 }],
+    line_items: [{ price, quantity: 1 }],
     allow_promotion_codes: true,
     client_reference_id: subscriber.id,
     ...(subscriber.stripe_customer_id

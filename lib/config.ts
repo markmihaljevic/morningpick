@@ -41,6 +41,7 @@ const envSchema = z.object({
   STRIPE_SECRET_KEY: z.string().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().default(""),
   STRIPE_PRICE_ID: z.string().default(""), // the $99/mo "The Desk" price
+  STRIPE_PRICE_ID_MOI: z.string().default(""), // the $49/mo MOI Global member price
 });
 
 export type Config = z.infer<typeof envSchema>;

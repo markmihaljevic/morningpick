@@ -35,7 +35,7 @@ export default async function DeskPage({ params }: { params: Promise<{ token: st
 
   const { data: subscriber } = await db()
     .from("subscribers")
-    .select("id, email, status, created_at, plan")
+    .select("id, email, status, created_at, plan, moi_member")
     .eq("portal_token", token)
     .single();
   if (!subscriber) notFound();
@@ -90,7 +90,13 @@ export default async function DeskPage({ params }: { params: Promise<{ token: st
             </span>
           </a>
           <span className="font-mono text-[10px] tracking-[0.2em] text-[#5C7183]">
-            PRIVATE DESK · {subscriber.email.toUpperCase()}
+            {subscriber.moi_member ? (
+              <span className="text-[#B08C3D]">MOI GLOBAL MEMBER · </span>
+            ) : null}
+            PRIVATE DESK · {subscriber.email.toUpperCase()}{" "}
+            <a href="/api/signout" className="ml-2 underline decoration-[#B08C3D]/50 underline-offset-4 hover:text-[#B08C3D]">
+              SIGN OUT
+            </a>
           </span>
         </div>
       </nav>
@@ -113,7 +119,7 @@ export default async function DeskPage({ params }: { params: Promise<{ token: st
               href={`/api/upgrade/${token}`}
               className="inline-block border border-[#B08C3D] bg-[#B08C3D] px-5 py-2 font-mono text-[11px] tracking-[0.15em] text-[#0B1622] transition-colors hover:bg-transparent hover:text-[#B08C3D]"
             >
-              JOIN THE DESK — DAILY NOTES — $99/MO
+              JOIN THE DESK — DAILY NOTES — {subscriber.moi_member ? "$49/MO MEMBER RATE" : "$99/MO"}
             </a>
           ) : subscriber.plan === "paid" ? (
             <span className="font-mono text-[10px] tracking-[0.2em] text-[#5C7183]">

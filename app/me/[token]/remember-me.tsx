@@ -2,14 +2,19 @@
 
 import { useEffect } from "react";
 
-/** Remember the desk token locally so the public homepage can offer a way back. */
+/**
+ * Persist the session: an httpOnly cookie (via /api/session) keeps this
+ * device signed in — visiting from an email link IS the login.
+ */
 export function RememberMe({ token }: { token: string }) {
   useEffect(() => {
-    try {
-      localStorage.setItem("mp_desk_token", token);
-    } catch {
-      // private mode etc. — the email link always works
-    }
+    fetch("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    }).catch(() => {
+      // cookie refresh is best-effort — the email link always works
+    });
   }, [token]);
   return null;
 }
