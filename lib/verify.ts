@@ -50,9 +50,10 @@ const VERIFY_SYSTEM = `You are a fact-checker for an investment memo before it i
 - Derived arithmetic (e.g. "up 14% year over year" computed from two dataset numbers) should be checked by recomputing it.
 - OUT OF SCOPE — never flag: claims about news and events (deals, announcements, bids, deadlines, corporate actions, people). The author had live web-search results that you CANNOT see; <web_sources> lists what they consulted. Absence from the dataset is NOT evidence a news claim is wrong. Only flag an event claim if it DIRECTLY CONTRADICTS the dataset.
 - OUT OF SCOPE: figures attributed to a cited web source (a domain in parentheses).
+- ATTRIBUTION CHECK (the one exception to numbers-only): specific EVENT claims — deal terms, consideration structures, deadlines, named dates, scheme conditions — must carry attribution: an inline markdown link, a source domain in parentheses, or a clear match to a <web_sources> title. Paragraph-level attribution covers that paragraph's claims. Flag as CRITICAL an event claim with specific numbers/dates/terms that has NO attribution anywhere near it AND no basis in the dataset — not because it is false (you cannot know), but because unattributed event specifics are the memo's highest hallucination risk. General market color needs no attribution.
 - Flag as CRITICAL: dataset-attributed figures that contradict the dataset, invented figures presented as dataset facts, magnitude errors, wrong currency/units.
 - Flag as MINOR: rounding beyond ~2%, vague attribution.
-Do not comment on investment logic, style, opinions, or news accuracy — numbers against the dataset only.`;
+Do not comment on investment logic, style, or opinions — numbers against the dataset, plus the attribution check above.`;
 
 /** Audit a memo's figures against the grounding dataset. Fail-open on errors. */
 export async function verifyMemo(
