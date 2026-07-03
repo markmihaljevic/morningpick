@@ -20,23 +20,35 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const today = new Date().toISOString().slice(0, 10);
 
   const dayStart = `${today}T00:00:00Z`;
-  const [{ data: deliveries }, { data: memos }, { data: budget }, { count: failopens }] =
-    await Promise.all([
-      db()
-        .from("deliveries")
-        .select("status, last_error, subscriber_id")
-        .eq("delivery_date", today),
-      db()
-        .from("memos")
-        .select("ticker, title, kind, sent_at, subscribers(email)")
-        .eq("delivery_date", today),
-      db().from("fmp_budget").select("used").eq("budget_date", today).maybeSingle(),
-      db()
-        .from("events")
-        .select("id", { count: "exact", head: true })
-        .eq("type", "verify_failopen")
-        .gte("created_at", dayStart),
-    ]);
+  const [
+    { data: deliveries },
+    { data: memos },
+    { data: budget },
+    { count: failopens },
+    { data: qualityEvents },
+    { count: preflightFallbacks },
+  ] = await Promise.all([
+    db()
+      .from("deliveries")
+      .select("status, last_error, subscriber_id")
+      .eq("delivery_date", today),
+    db()
+      .from("memos")
+      .select("ticker, title, kind, sent_at, subscribers(email)")
+      .eq("delivery_date", today),
+    db().from("fmp_budget").select("used").eq("budget_date", today).maybeSingle(),
+    db()
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .eq("type", "verify_failopen")
+      .gte("created_at", dayStart),
+    db().from("events").select("payload").eq("type", "memo_quality").gte("created_at", dayStart),
+    db()
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .eq("type", "preflight_fallback")
+      .gte("created_at", dayStart),
+  ]);
 
   const counts: Record<string, number> = {};
   for (const d of deliveries ?? []) counts[d.status] = (counts[d.status] ?? 0) + 1;
@@ -65,6 +77,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     ...(stuck.length > 0
       ? [`⚠️ Still pending/processing (${stuck.length}) — check the worker.`, ``]
       : []),
+    ...qualityLines(qualityEvents ?? [], preflightFallbacks ?? 0),
     `FMP requests used today: ${budget?.used ?? 0} / ${cfg.FMP_DAILY_BUDGET}`,
   ];
 
@@ -76,4 +89,37 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   );
 
   return NextResponse.json({ ok: true, counts, failed: failed.length, stuck: stuck.length });
+}
+
+interface QualityPayload {
+  kind?: string;
+  conviction?: number | null;
+  catalystStrength?: number | null;
+  editorialRevised?: boolean;
+  verifyCritical?: number;
+  genMs?: number;
+}
+
+/** Quality pulse: drift shows up here before subscribers feel it. */
+function qualityLines(events: { payload: unknown }[], preflightFallbacks: number): string[] {
+  if (events.length === 0) return [];
+  const q = events.map((e) => (e.payload ?? {}) as QualityPayload);
+  const kinds: Record<string, number> = {};
+  for (const p of q) kinds[p.kind ?? "?"] = (kinds[p.kind ?? "?"] ?? 0) + 1;
+  const nums = (vals: (number | null | undefined)[]) =>
+    vals.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const avg = (vals: number[]) =>
+    vals.length === 0 ? "—" : (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+  const convictions = nums(q.map((p) => p.conviction));
+  const catalysts = nums(q.map((p) => p.catalystStrength));
+  const genMinutes = nums(q.map((p) => p.genMs)).map((ms) => ms / 60000);
+  const revised = q.filter((p) => p.editorialRevised).length;
+  return [
+    `Quality pulse:`,
+    `  note mix: ${Object.entries(kinds)
+      .map(([k, n]) => `${k}×${n}`)
+      .join(", ")}${preflightFallbacks > 0 ? ` (${preflightFallbacks} pre-flight fallback${preflightFallbacks > 1 ? "s" : ""})` : ""}`,
+    `  avg conviction ${avg(convictions)} · avg catalyst ${avg(catalysts)} · editorial revised ${revised}/${q.length} · avg gen ${avg(genMinutes)} min`,
+    ``,
+  ];
 }

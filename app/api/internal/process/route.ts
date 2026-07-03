@@ -159,6 +159,8 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
   let title: string;
   // Follow-up verdicts (stands/watching/closed) update the book after send.
   let metaForVerdict: { call_status?: string; close_reason?: string } | null = null;
+  let quality: Record<string, unknown> | null = null;
+  const genStartedAt = Date.now();
 
   if (existingMemo) {
     // Generated but not sent — reuse it instead of paying for regeneration.
@@ -315,6 +317,17 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     ]);
     title = memo.title;
     if (memoKind === "followup") metaForVerdict = memo.meta;
+    quality = {
+      kind: memoKind,
+      ticker,
+      conviction: memo.meta?.conviction ?? null,
+      catalystStrength: Number(selectionRationale.match(/catalyst strength (\d+)\/10/)?.[1] ?? NaN) || null,
+      editorialRevised: memo.editorial.revised,
+      editorialIssues: memo.editorial.issueCount,
+      verifyCritical: memo.verification.critical_issues.length,
+      verifyMinor: memo.verification.minor_issues.length,
+      genMs: Date.now() - genStartedAt,
+    };
     const stats = memoKind === "review" ? [] : buildKeyStats(data);
     const street = memoKind === "review" ? [] : buildStreetItems(data);
     const comps = memoKind === "review" ? [] : buildCompsRows(ticker, data);
@@ -388,6 +401,9 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     subscriberId: subscriber.id,
     payload: { memoId, ticker, resendId },
   });
+  if (quality) {
+    await logEvent("memo_quality", { subscriberId: subscriber.id, payload: quality });
+  }
 
   // A follow-up's verdict updates the book: the original call's status
   // changes across every note on that ticker for this subscriber.

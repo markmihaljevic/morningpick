@@ -33,6 +33,7 @@ export interface GeneratedMemo {
   title: string;
   model: string;
   sources: MemoSource[];
+  editorial: { revised: boolean; issueCount: number };
 }
 
 /**
@@ -189,6 +190,7 @@ export async function generateMemo(args: {
     console.log(`Editorial revision applied for ${args.ticker}: ${editorial.issues.join(" | ")}`);
   }
   cleaned = editorial.markdown;
+  const editorialOutcome = { revised: editorial.revised, issueCount: editorial.issues.length };
 
   // Inline-link validation: any URL not in the author's verified source set
   // (its own search results + curated reference links) is stripped back to
@@ -222,6 +224,7 @@ export async function generateMemo(args: {
     title,
     model: cfg.MEMO_MODEL,
     sources: [...sourceByUrl.values()].slice(0, 10),
+    editorial: editorialOutcome,
   };
 }
 
