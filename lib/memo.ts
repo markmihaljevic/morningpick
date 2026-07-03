@@ -41,6 +41,7 @@ export async function generateMemo(args: {
   selectionRationale: string;
   coverage?: unknown[];
   followup?: FollowupContext;
+  referenceLinks?: { label: string; url: string }[];
 }): Promise<GeneratedMemo> {
   const cfg = config();
   const userPrompt = buildMemoUserPrompt({
@@ -52,6 +53,7 @@ export async function generateMemo(args: {
     selectionRationale: args.selectionRationale,
     coverage: args.coverage,
     followup: args.followup,
+    referenceLinks: args.referenceLinks,
   });
 
   const baseRequest = {
@@ -138,9 +140,18 @@ export async function generateMemo(args: {
   // the deliverable always starts at the H1. Also strip literal <cite> tags
   // the web-search tool sometimes embeds (they'd render as raw HTML in email).
   const h1Index = markdown.indexOf("# ");
-  const cleaned = (h1Index > 0 ? markdown.slice(h1Index) : markdown)
+  let cleaned = (h1Index > 0 ? markdown.slice(h1Index) : markdown)
     .replace(/<cite[^>]*>([\s\S]*?)<\/cite>/g, "$1")
     .replace(/<\/?antml?[^>]*>/g, "");
+
+  // Inline-link validation: any URL not in the author's verified source set
+  // (its own search results + curated reference links) is stripped back to
+  // plain text — hallucinated links are structurally impossible.
+  const allowedUrls = new Set<string>(searchResults.keys());
+  for (const l of args.referenceLinks ?? []) allowedUrls.add(l.url);
+  cleaned = cleaned.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, text: string, url: string) =>
+    allowedUrls.has(url) ? match : text,
+  );
   if (!cleaned) {
     throw new Error(`Memo generation for ${args.ticker} returned no text.`);
   }
@@ -246,6 +257,7 @@ export async function generateVerifiedMemo(args: {
   selectionRationale: string;
   coverage?: unknown[];
   followup?: FollowupContext;
+  referenceLinks?: { label: string; url: string }[];
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   let memo = await generateMemo(args);
   let verification = await verifyMemo(memo.markdown, args.data, memo.sources);

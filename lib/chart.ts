@@ -1,4 +1,5 @@
 import { fmpGet } from "./fmp";
+import { BRAND } from "./brand";
 
 interface PriceRow {
   date: string;
@@ -6,9 +7,10 @@ interface PriceRow {
 }
 
 /**
- * Build a 5-year monthly price chart as a hosted PNG (QuickChart) and return
- * its URL for use in an email <img>. Returns null on any failure — the memo
- * ships without a chart rather than failing the delivery.
+ * 5-year monthly price chart as a hosted PNG (QuickChart, Chart.js v4):
+ * thin ink line over a soft gold area fill, hairline horizontal grid only,
+ * sparse year ticks, right-side axis, retina. Returns null on any failure —
+ * the memo ships without a chart rather than failing the delivery.
  */
 export async function buildFiveYearChartUrl(
   ticker: string,
@@ -23,23 +25,30 @@ export async function buildFiveYearChartUrl(
     });
     if (!rows || rows.length < 30) return null;
 
-    // Oldest → newest, downsampled to month-end points (~60).
     const asc = [...rows].sort((a, b) => a.date.localeCompare(b.date));
     const byMonth = new Map<string, PriceRow>();
     for (const r of asc) byMonth.set(r.date.slice(0, 7), r); // last row of each month wins
     const monthly = [...byMonth.values()];
 
-    const labels = monthly.map((r) => r.date.slice(0, 7));
+    // Year labels only at January (or the first point) — sparse, editorial.
+    const labels = monthly.map((r, i) => {
+      const [year, month] = r.date.split("-");
+      return month === "01" || i === 0 ? year : "";
+    });
     const prices = monthly.map((r) => r.price);
+    const last = prices[prices.length - 1];
+    const lastFmt = last >= 100 ? last.toFixed(0) : last.toFixed(2);
 
     const res = await fetch("https://quickchart.io/chart/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: AbortSignal.timeout(15_000),
       body: JSON.stringify({
-        backgroundColor: "#f6f5f1",
-        width: 600,
+        version: "4",
+        backgroundColor: BRAND.paper,
+        width: 640,
         height: 280,
+        devicePixelRatio: 2,
         format: "png",
         chart: {
           type: "line",
@@ -47,36 +56,59 @@ export async function buildFiveYearChartUrl(
             labels,
             datasets: [
               {
-                label: ticker,
                 data: prices,
-                fill: false,
-                borderColor: "#1e222a",
-                borderWidth: 2,
+                borderColor: BRAND.ink,
+                borderWidth: 1.75,
                 pointRadius: 0,
+                fill: true,
+                backgroundColor: "rgba(176, 140, 61, 0.12)",
+                tension: 0,
               },
             ],
           },
           options: {
-            legend: { display: false },
-            title: {
-              display: true,
-              text: `${ticker} — 5 years${currency ? ` (${currency})` : ""}`,
-              fontFamily: "Georgia",
-              fontColor: "#1e222a",
+            layout: { padding: { top: 8, right: 4, left: 10, bottom: 4 } },
+            plugins: {
+              legend: { display: false },
+              title: {
+                display: true,
+                align: "start",
+                text: `${ticker}  ·  5 YEARS${currency ? `  (${currency})` : ""}`,
+                color: BRAND.slate,
+                font: { family: "Helvetica", size: 11, weight: "bold" },
+                padding: { bottom: 2 },
+              },
+              subtitle: {
+                display: true,
+                align: "start",
+                text: `Last ${lastFmt}${currency ? ` ${currency}` : ""}`,
+                color: BRAND.gold,
+                font: { family: "Helvetica", size: 11, weight: "bold" },
+                padding: { bottom: 12 },
+              },
             },
             scales: {
-              xAxes: [
-                {
-                  ticks: { maxTicksLimit: 6, fontColor: "#8a8578" },
-                  gridLines: { display: false },
+              x: {
+                grid: { display: false },
+                border: { color: BRAND.rule },
+                ticks: {
+                  autoSkip: false,
+                  maxRotation: 0,
+                  color: BRAND.slate,
+                  font: { family: "Helvetica", size: 10 },
                 },
-              ],
-              yAxes: [
-                {
-                  ticks: { maxTicksLimit: 6, fontColor: "#8a8578" },
-                  gridLines: { color: "#ddd8cc" },
+              },
+              y: {
+                position: "right",
+                border: { display: false },
+                grid: { color: "rgba(16, 32, 47, 0.08)", drawTicks: false },
+                ticks: {
+                  maxTicksLimit: 5,
+                  color: BRAND.slate,
+                  font: { family: "Helvetica", size: 10 },
+                  padding: 6,
                 },
-              ],
+              },
             },
           },
         },

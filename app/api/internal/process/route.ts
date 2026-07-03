@@ -222,26 +222,33 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       companyName = pool.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase())?.name;
     }
 
-    const data = await fetchTickerData(ticker);
-    const memo = await generateVerifiedMemo({
-      profile,
-      ticker,
-      companyName,
-      data,
-      selectionRationale,
-      coverage,
-      followup: followupContext,
-    });
-    title = memo.title;
-
+    const [data, primarySources] = await Promise.all([
+      fetchTickerData(ticker),
+      discoverPrimarySources(ticker, companyName ?? ticker),
+    ]);
     const companyProfile = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
       | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
       | undefined;
-    const [chartUrl, primarySources] = await Promise.all([
-      buildFiveYearChartUrl(ticker, companyProfile?.currency),
-      discoverPrimarySources(ticker, companyName ?? ticker),
-    ]);
     const researchLinks = buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
+    const referenceLinks = [
+      ...researchLinks,
+      ...primarySources.map((s) => ({ label: s.title, url: s.url })),
+    ];
+
+    const [memo, chartUrl] = await Promise.all([
+      generateVerifiedMemo({
+        profile,
+        ticker,
+        companyName,
+        data,
+        selectionRationale,
+        coverage,
+        followup: followupContext,
+        referenceLinks,
+      }),
+      buildFiveYearChartUrl(ticker, companyProfile?.currency),
+    ]);
+    title = memo.title;
     const stats = buildKeyStats(data);
     const street = buildStreetItems(data);
     const pitch = extractPitchPrice(data);
@@ -263,7 +270,6 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       meta: memo.meta,
       primarySources,
       chartUrl,
-      researchLinks,
       sources: memo.sources,
       pdfUrl: `${config().APP_URL}/api/memo/${memoId}/pdf`,
     });

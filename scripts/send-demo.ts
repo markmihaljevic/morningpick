@@ -81,7 +81,18 @@ async function main() {
   console.error(`Selected: ${selection.ticker} — ${selection.rationale}`);
 
   const companyName = pool.find((c) => c.ticker === selection.ticker)?.name;
-  const data = await fetchTickerData(selection.ticker);
+  const [data, primarySources] = await Promise.all([
+    fetchTickerData(selection.ticker),
+    discoverPrimarySources(selection.ticker, companyName ?? selection.ticker),
+  ]);
+  const companyProfile0 = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
+    | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
+    | undefined;
+  const referenceLinks = [
+    ...buildResearchLinks(selection.ticker, companyName ?? selection.ticker, companyProfile0),
+    ...primarySources.map((s) => ({ label: s.title, url: s.url })),
+  ];
+  console.error(`Primary sources: ${primarySources.map((s) => `[${s.type}] ${s.title}`).join(" | ") || "none cleared the bar"}`);
   console.error("Generating + fact-checking memo…");
   const memo = await generateVerifiedMemo({
     profile,
@@ -89,20 +100,14 @@ async function main() {
     companyName,
     data,
     selectionRationale: selection.rationale,
+    referenceLinks,
   });
   console.error(
     `Verification: ${memo.verification.critical_issues.length} critical, ${memo.verification.minor_issues.length} minor issues`,
   );
 
-  const companyProfile = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
-    | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
-    | undefined;
-  const [chartUrl, primarySources] = await Promise.all([
-    buildFiveYearChartUrl(selection.ticker, companyProfile?.currency),
-    discoverPrimarySources(selection.ticker, companyName ?? selection.ticker),
-  ]);
+  const chartUrl = await buildFiveYearChartUrl(selection.ticker, companyProfile0?.currency);
   console.error(`Chart: ${chartUrl ?? "unavailable"}`);
-  console.error(`Primary sources: ${primarySources.map((s) => `[${s.type}] ${s.title}`).join(" | ") || "none cleared the bar"}`);
 
   const html = renderMemoEmail({
     markdown: memo.markdown,
@@ -114,7 +119,6 @@ async function main() {
     meta: memo.meta,
     primarySources,
     chartUrl,
-    researchLinks: buildResearchLinks(selection.ticker, companyName ?? selection.ticker, companyProfile),
     sources: memo.sources,
   });
   const htmlPath = process.env.DEMO_HTML_OUT;

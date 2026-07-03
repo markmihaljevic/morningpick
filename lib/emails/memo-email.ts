@@ -2,7 +2,6 @@ import { marked } from "marked";
 import { emailLayout, escapeHtml } from "./layout";
 import { BRAND } from "../brand";
 import type { MemoSource, MemoMeta } from "../memo";
-import type { ResearchLink } from "../research-links";
 import type { KeyStat } from "../stats";
 import type { StreetItem } from "../street";
 import type { PrimarySource } from "../enrich-sources";
@@ -26,7 +25,6 @@ export interface MemoEmailArgs {
   meta?: MemoMeta | null;
   primarySources?: PrimarySource[];
   chartUrl?: string | null;
-  researchLinks?: ResearchLink[];
   sources?: MemoSource[];
   pdfUrl?: string | null;
 }
@@ -51,7 +49,8 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     .replace(/<ol>/g, '<ol style="margin:0 0 15px;padding-left:22px;">')
     .replace(/<ul>/g, '<ul style="margin:0 0 15px;padding-left:22px;">')
     .replace(/<li>/g, '<li style="margin:0 0 8px;">')
-    .replace(/<strong>/g, `<strong style="color:${BRAND.ink};">`);
+    .replace(/<strong>/g, `<strong style="color:${BRAND.ink};">`)
+    .replace(/<a href=/g, `<a style="color:${BRAND.gold};font-weight:700;text-decoration:underline;text-decoration-color:${BRAND.rule};" href=`);
 
   const sections: string[] = [];
 
@@ -158,23 +157,13 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     );
   }
 
-  // Compact utility row: PDF + registry research links in one line each.
-  const utilityLinks: string[] = [];
   if (args.pdfUrl) {
-    utilityLinks.push(
-      `<a href="${args.pdfUrl}" style="color:${BRAND.ink};font-weight:700;">Download PDF ↧</a>`,
-    );
-  }
-  for (const l of args.researchLinks ?? []) {
-    utilityLinks.push(`<a href="${l.url}" style="color:${BRAND.slate};">${escapeHtml(l.label)}</a>`);
-  }
-  if (utilityLinks.length > 0) {
     sections.push(
-      `<div style="margin:26px 0 0;">
-        ${sectionLabel("DIG DEEPER")}
-        <p style="margin:0;font-family:${BRAND.sans};font-size:13px;line-height:2.1;">
-          ${utilityLinks.join(` &nbsp;<span style="color:${BRAND.rule};">|</span>&nbsp; `)}
-        </p>
+      `<div style="margin:28px 0 0;">
+        <a href="${args.pdfUrl}"
+           style="display:inline-block;background:${BRAND.ink};color:${BRAND.paper};font-family:${MONO};font-size:11px;letter-spacing:2px;padding:11px 22px;text-decoration:none;border-bottom:2px solid ${BRAND.gold};">
+          DOWNLOAD PDF ↧
+        </a>
       </div>`,
     );
   }
