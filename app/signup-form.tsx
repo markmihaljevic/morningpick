@@ -28,14 +28,14 @@ export function SignupForm() {
 
   if (state === "done") {
     return (
-      <p className="text-lg border border-[#10202F] px-6 py-4">
-        ✉️ {message}
+      <p className="inline-block border border-[#B08C3D] px-5 py-3.5 font-mono text-[13px] tracking-wide text-[#B08C3D]">
+        ✓ {message.toUpperCase()}
       </p>
     );
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col sm:flex-row gap-3 w-full max-w-md">
+    <form onSubmit={submit} className="flex w-full max-w-md flex-col gap-3 sm:flex-row">
       {/* Honeypot — hidden from real users */}
       <input
         type="text"
@@ -51,16 +51,18 @@ export function SignupForm() {
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="you@example.com"
-        className="flex-1 border border-[#10202F] bg-transparent px-4 py-3 text-base outline-none placeholder:text-[#5C6670] focus:bg-white"
+        className="flex-1 border border-white/25 bg-white/5 px-4 py-3 font-mono text-[14px] text-[#FBFAF6] outline-none placeholder:text-[#5C6670] focus:border-[#B08C3D]"
       />
       <button
         type="submit"
         disabled={state === "loading"}
-        className="bg-[#10202F] px-6 py-3 font-sans text-sm tracking-widest text-[#FBFAF6] disabled:opacity-60"
+        className="border-b-2 border-[#B08C3D] bg-[#FBFAF6] px-6 py-3 font-mono text-[12px] font-semibold tracking-[0.2em] text-[#0B1622] transition-opacity hover:opacity-90 disabled:opacity-60"
       >
-        {state === "loading" ? "…" : "SUBSCRIBE"}
+        {state === "loading" ? "…" : "SUBSCRIBE — FREE"}
       </button>
-      {state === "error" && <p className="text-sm text-red-700">{message}</p>}
+      {state === "error" && (
+        <p className="font-mono text-[12px] text-red-400 sm:self-center">{message}</p>
+      )}
     </form>
   );
 }

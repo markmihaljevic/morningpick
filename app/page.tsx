@@ -1,85 +1,186 @@
 import { SignupForm } from "./signup-form";
+import { getPipelineStats } from "@/lib/pipeline-stats";
+
+export const revalidate = 3600;
 
 export const metadata = {
-  title: "Morningpick — one investment idea, every morning",
+  title: "Morningpick — your AI research analyst",
   description:
-    "A daily AI-generated investment research note, personalized to your investment philosophy. Reply to teach it what you like.",
+    "One institutional-grade investment research note every morning — screened across global exchanges, fact-checked against live data, personalized to your philosophy.",
 };
 
-function Wordmark() {
+function SunMark({ className = "" }: { className?: string }) {
+  return <div className={`h-[10px] w-[20px] rounded-t-full bg-[#B08C3D] ${className}`} />;
+}
+
+/** The product artifact: a real research note (Genel Energy, 3 July 2026). */
+function MemoArtifact() {
+  const stats = [
+    ["PRICE", "55.90 GBp"],
+    ["MKT CAP", "$155M"],
+    ["P/E", "3.5x"],
+    ["P/B", "0.4x"],
+    ["EV/EBITDA", "0.9x"],
+    ["FCF YIELD", "23.9%"],
+  ];
   return (
-    <div>
-      <div className="mb-1.5 h-[11px] w-[22px] rounded-t-full bg-[#B08C3D]" />
-      <p className="font-sans text-lg tracking-[0.25em] text-[#FBFAF6]">
-        MORNING<span className="font-bold">PICK</span>
-      </p>
+    <div className="relative">
+      {/* PDF sheet peeking behind */}
+      <div className="absolute -right-3 top-4 hidden h-full w-full rotate-2 rounded-sm bg-[#e8e4d8] shadow-xl lg:block" />
+      <div className="relative rounded-sm bg-[#FBFAF6] text-[#10202F] shadow-2xl">
+        <div className="flex items-center justify-between rounded-t-sm border-b-2 border-[#B08C3D] bg-[#10202F] px-5 py-3">
+          <span className="font-sans text-[11px] tracking-[0.3em] text-[#FBFAF6]">
+            MORNING<span className="font-bold">PICK</span>
+          </span>
+          <span className="font-mono text-[9px] tracking-widest text-[#8FA0B0]">3 JULY 2026</span>
+        </div>
+        <div className="px-5 py-4">
+          <p className="font-mono text-[8px] tracking-[0.2em] text-[#5C6670]">
+            PRIVATE RESEARCH NOTE · PREPARED FOR YOU
+          </p>
+          <h3 className="mt-2 font-serif text-[19px] leading-snug font-bold">
+            GENL.L — An Iraqi-Kurdistan cash machine the market prices as a going-concern risk
+          </h3>
+          <div className="mt-3 grid grid-cols-3 gap-px border border-[#E4E0D5] bg-[#E4E0D5]">
+            {stats.map(([label, value]) => (
+              <div key={label} className="bg-white px-2.5 py-1.5">
+                <p className="font-mono text-[7px] tracking-wider text-[#5C6670]">{label}</p>
+                <p className="font-sans text-[12px] font-bold">{value}</p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3.5 font-serif text-[13px] leading-relaxed">
+            <strong>The idea</strong> — Genel trades below net cash with Kurdistan exports
+            restarting, a 23.9% free-cash-flow yield, and a balance sheet the market refuses to
+            believe. The bear case is priced as permanent; the upside needs only normalcy…
+          </p>
+          <p className="mt-2.5 font-serif text-[13px] leading-relaxed text-[#5C6670]">
+            <strong className="text-[#10202F]">Why now</strong> — Pipeline flows resumed in June
+            and the first payment cycle confirmed
+          </p>
+        </div>
+        <div className="rounded-b-sm bg-gradient-to-b from-transparent to-[#FBFAF6] px-5 pb-4">
+          <div className="flex items-center justify-between border-t border-[#E4E0D5] pt-3">
+            <span className="font-mono text-[8px] tracking-widest text-[#5C6670]">
+              FACT-CHECKED ✓ · 5Y CHART · SOURCES · PDF
+            </span>
+            <span className="font-mono text-[8px] tracking-widest text-[#B08C3D]">
+              REPLY TO REFINE →
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-export default function Home() {
+export default async function Home() {
+  const stats = await getPipelineStats();
+  const fmt = (n: number | null) => (n === null ? "—" : n.toLocaleString("en-US"));
+
   return (
-    <main className="min-h-screen bg-[#FBFAF6] text-[#10202F]">
-      {/* Masthead */}
-      <div className="border-b-[3px] border-[#B08C3D] bg-[#10202F]">
-        <div className="mx-auto flex max-w-2xl items-end justify-between px-6 py-5">
-          <Wordmark />
-          <p className="hidden font-sans text-[11px] tracking-[0.2em] text-[#8FA0B0] sm:block">
-            ONE IDEA. EVERY MORNING.
+    <main className="min-h-screen bg-[#0B1622] font-sans text-[#FBFAF6]">
+      {/* Nav */}
+      <nav className="border-b border-white/10">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+          <div className="flex items-end gap-2.5">
+            <SunMark className="mb-[3px]" />
+            <span className="text-[15px] tracking-[0.3em]">
+              MORNING<span className="font-bold">PICK</span>
+            </span>
+          </div>
+          <a
+            href="#subscribe"
+            className="border border-[#B08C3D] px-4 py-1.5 font-mono text-[11px] tracking-[0.15em] text-[#B08C3D] transition-colors hover:bg-[#B08C3D] hover:text-[#0B1622]"
+          >
+            GET THE NOTE
+          </a>
+        </div>
+      </nav>
+
+      {/* Hero */}
+      <div className="mx-auto grid max-w-6xl items-center gap-14 px-6 pt-16 pb-12 lg:grid-cols-[1.05fr_0.95fr] lg:pt-24">
+        <div>
+          <p className="font-mono text-[11px] tracking-[0.25em] text-[#B08C3D]">
+            YOUR AI RESEARCH ANALYST
           </p>
+          <h1 className="mt-4 text-[42px] leading-[1.05] font-bold tracking-tight sm:text-[56px]">
+            One institutional-grade stock idea.
+            <br />
+            <span className="text-[#8FA0B0]">In your inbox, every morning.</span>
+          </h1>
+          <p className="mt-6 max-w-xl text-[17px] leading-relaxed text-[#c9cfd6]">
+            Morningpick screens thousands of companies across global exchanges overnight, selects
+            the one that fits <em className="not-italic font-semibold text-[#FBFAF6]">your</em>{" "}
+            investment philosophy, writes the research note, and fact-checks every figure — before
+            you&apos;ve had coffee.
+          </p>
+          <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-[#8FA0B0]">
+            Don&apos;t like the pick? Reply to the email in plain English. Tomorrow&apos;s analyst
+            remembers.
+          </p>
+
+          <div id="subscribe" className="mt-8">
+            <SignupForm />
+          </div>
+
+          {/* Live pipeline strip */}
+          <div className="mt-10 border-t border-white/10 pt-5">
+            <p className="font-mono text-[10px] tracking-[0.2em] text-[#5C6670]">
+              LIVE FROM THIS MORNING&apos;S RUN
+            </p>
+            <div className="mt-3 flex flex-wrap gap-x-8 gap-y-3 font-mono text-[12px] tracking-wider">
+              <span>
+                <span className="text-[18px] font-semibold text-[#B08C3D] tabular-nums">
+                  {fmt(stats.companiesScreened)}
+                </span>{" "}
+                <span className="text-[#8FA0B0]">COMPANIES SCREENED</span>
+              </span>
+              <span>
+                <span className="text-[18px] font-semibold text-[#B08C3D] tabular-nums">25</span>{" "}
+                <span className="text-[#8FA0B0]">SHORTLISTED / READER</span>
+              </span>
+              <span>
+                <span className="text-[18px] font-semibold text-[#B08C3D] tabular-nums">1</span>{" "}
+                <span className="text-[#8FA0B0]">SELECTED</span>
+              </span>
+              {stats.lastRunAt && (
+                <span className="text-[#5C6670]">LAST RUN {stats.lastRunAt}</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <MemoArtifact />
+      </div>
+
+      {/* Pipeline strip */}
+      <div className="border-t border-white/10 bg-[#10202F]">
+        <div className="mx-auto grid max-w-6xl gap-8 px-6 py-12 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            ["01 / SCREEN", "Profile-derived screens sweep the US, Europe, UK, Canada, Australia and Asia — down to micro caps."],
+            ["02 / SELECT", "Thousands of candidates, one shortlist, one pick — argued on real valuation data, not vibes."],
+            ["03 / VERIFY", "A second model audits every figure in the note against the source data before it can send."],
+            ["04 / LEARN", "Your replies update a persistent profile. The analyst never forgets what you told it."],
+          ].map(([label, body]) => (
+            <div key={label}>
+              <p className="font-mono text-[11px] tracking-[0.2em] text-[#B08C3D]">{label}</p>
+              <p className="mt-2.5 text-[14px] leading-relaxed text-[#8FA0B0]">{body}</p>
+            </div>
+          ))}
         </div>
       </div>
 
-      <div className="mx-auto max-w-2xl px-6 py-16 font-serif">
-        <h1 className="text-4xl leading-tight sm:text-5xl">
-          Your own research desk.
-          <br />
-          One idea, every morning.
-        </h1>
-        <p className="mt-8 text-lg leading-relaxed">
-          Each morning you receive a single institutional-grade research note — thesis, valuation,
-          risks, insider activity, catalysts — researched against live market data across global
-          exchanges and written for <em>your</em> investment style.
-        </p>
-        <p className="mt-4 text-lg leading-relaxed">
-          Don&apos;t like the pick? <strong>Just reply to the email.</strong>{" "}&ldquo;More European
-          small caps.&rdquo; &ldquo;Less tech.&rdquo; &ldquo;I&apos;m a deep value
-          contrarian.&rdquo; Tomorrow&apos;s note listens.
-        </p>
-
-        <div className="mt-10">
-          <SignupForm />
-        </div>
-
-        <div className="mt-14 grid gap-6 border-t border-[#E4E0D5] pt-8 font-sans text-sm sm:grid-cols-3">
-          <div>
-            <p className="text-[11px] tracking-[0.2em] text-[#B08C3D]">GROUNDED</p>
-            <p className="mt-2 leading-relaxed text-[#5C6670]">
-              Every figure fact-checked against live market data before it reaches you.
-            </p>
-          </div>
-          <div>
-            <p className="text-[11px] tracking-[0.2em] text-[#B08C3D]">GLOBAL</p>
-            <p className="mt-2 leading-relaxed text-[#5C6670]">
-              Screens thousands of companies across the US, Europe, UK, Canada, Australia and Asia.
-            </p>
-          </div>
-          <div>
-            <p className="text-[11px] tracking-[0.2em] text-[#B08C3D]">YOURS</p>
-            <p className="mt-2 leading-relaxed text-[#5C6670]">
-              A preference profile that learns from every reply — like an analyst who never forgets.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-14 border-t border-[#E4E0D5] pt-6 font-sans text-xs leading-relaxed text-[#5C6670]">
-          <p>
-            Not investment advice. Notes are AI-generated, for informational and entertainment
-            purposes only, and may contain errors. Do your own research. Free — unsubscribe with
-            one click, any time.
+      {/* Footer */}
+      <footer className="border-t border-white/10">
+        <div className="mx-auto max-w-6xl px-6 py-8">
+          <p className="max-w-3xl font-mono text-[10px] leading-relaxed tracking-wide text-[#5C6670]">
+            NOT INVESTMENT ADVICE. NOTES ARE AI-GENERATED, FOR INFORMATIONAL AND ENTERTAINMENT
+            PURPOSES ONLY, AND MAY CONTAIN ERRORS. DO YOUR OWN RESEARCH. FREE — UNSUBSCRIBE WITH
+            ONE CLICK, ANY TIME.
           </p>
         </div>
-      </div>
+      </footer>
     </main>
   );
 }
