@@ -5,6 +5,7 @@ import type { Profile } from "./profile";
 import type { TickerData } from "./fmp";
 import { MEMO_SYSTEM_PROMPT, buildMemoUserPrompt, type FollowupContext } from "./prompts/memo";
 import { verifyMemo, type VerificationResult } from "./verify";
+import { editMemo } from "./editor";
 
 const MAX_CONTINUATIONS = 5;
 
@@ -166,17 +167,28 @@ export async function generateMemo(args: {
     .replace(/<cite[^>]*>([\s\S]*?)<\/cite>/g, "$1")
     .replace(/<\/?antml?[^>]*>/g, "");
 
+  if (!cleaned) {
+    throw new Error(`Memo generation for ${args.ticker} returned no text.`);
+  }
+
+  // Editorial desk: critique the writing, revise once if it materially helps.
+  // Facts/links are contractually untouched; the verify pass still runs on
+  // whatever comes out.
+  const editorial = await editMemo(cleaned);
+  if (editorial.revised) {
+    console.log(`Editorial revision applied for ${args.ticker}: ${editorial.issues.join(" | ")}`);
+  }
+  cleaned = editorial.markdown;
+
   // Inline-link validation: any URL not in the author's verified source set
   // (its own search results + curated reference links) is stripped back to
-  // plain text — hallucinated links are structurally impossible.
+  // plain text — hallucinated links are structurally impossible. Runs AFTER
+  // the editorial pass so a revision can't smuggle a new URL through.
   const allowedUrls = new Set<string>(searchResults.keys());
   for (const l of args.referenceLinks ?? []) allowedUrls.add(l.url);
   cleaned = cleaned.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, text: string, url: string) =>
     allowedUrls.has(url) ? match : text,
   );
-  if (!cleaned) {
-    throw new Error(`Memo generation for ${args.ticker} returned no text.`);
-  }
 
   const heading = cleaned.match(/^#\s+(.+)$/m)?.[1]?.trim();
   const title = heading ?? `${args.ticker} — today's idea`;
