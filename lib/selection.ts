@@ -40,10 +40,8 @@ const FINAL_SCHEMA = {
     },
     catalyst_strength: {
       type: "integer",
-      minimum: 1,
-      maximum: 10,
       description:
-        "How strong the 'why today' is: 8-10 live corporate event, 5-7 upcoming catalyst (earnings, decision date), 1-4 statistical cheapness only",
+        "1-10. How strong the 'why today' is: 8-10 live corporate event, 5-7 upcoming catalyst (earnings, decision date), 1-4 statistical cheapness only",
     },
   },
   required: ["ticker", "rationale", "catalyst_strength"],
