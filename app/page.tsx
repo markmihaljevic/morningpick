@@ -13,15 +13,15 @@ function SunMark({ className = "" }: { className?: string }) {
   return <div className={`h-[10px] w-[20px] rounded-t-full bg-[#B08C3D] ${className}`} />;
 }
 
-/** The product artifact: a real research note (Genel Energy, 3 July 2026). */
+/** The product artifact: a real research note (Capricorn Energy, 3 July 2026). */
 function MemoArtifact() {
   const stats = [
-    ["PRICE", "55.90 GBp"],
-    ["MKT CAP", "$155M"],
-    ["P/E", "3.5x"],
-    ["P/B", "0.4x"],
-    ["EV/EBITDA", "0.9x"],
-    ["FCF YIELD", "23.9%"],
+    ["PRICE", "GBp 346"],
+    ["MKT CAP", "GBp 237M"],
+    ["P/E", "9.4x"],
+    ["P/B", "0.5x"],
+    ["EV/EBITDA", "1.6x"],
+    ["FCF YIELD", "33.5%"],
   ];
   return (
     <div className="relative">
@@ -39,8 +39,16 @@ function MemoArtifact() {
             PRIVATE RESEARCH NOTE · PREPARED FOR YOU
           </p>
           <h3 className="mt-2 font-serif text-[19px] leading-snug font-bold">
-            GENL.L — An Iraqi-Kurdistan cash machine the market prices as a going-concern risk
+            CNE.L — Palliser's second rodeo, and why Cairo now holds the casting vote
           </h3>
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 bg-[#10202F] px-3 py-1.5">
+            <span className="font-mono text-[8px] tracking-[0.12em] text-[#8FA0B0]">
+              CONVICTION <span className="text-[#B08C3D]">6/10</span>
+            </span>
+            <span className="font-mono text-[8px] tracking-[0.12em] text-[#FBFAF6]">3–9 MONTHS</span>
+            <span className="font-mono text-[8px] tracking-[0.12em] text-[#8FA0B0]">MERGER ARB</span>
+            <span className="font-mono text-[8px] tracking-[0.12em] text-[#8FA0B0]">EVENT DRIVEN</span>
+          </div>
           <div className="mt-3 grid grid-cols-3 gap-px border border-[#E4E0D5] bg-[#E4E0D5]">
             {stats.map(([label, value]) => (
               <div key={label} className="bg-white px-2.5 py-1.5">
@@ -49,14 +57,14 @@ function MemoArtifact() {
               </div>
             ))}
           </div>
-          <p className="mt-3.5 font-serif text-[13px] leading-relaxed">
-            <strong>The idea</strong> — Genel trades below net cash with Kurdistan exports
-            restarting, a 23.9% free-cash-flow yield, and a balance sheet the market refuses to
-            believe. The bear case is priced as permanent; the upside needs only normalcy…
+          <p className="mt-3.5 font-serif text-[13px] leading-relaxed italic border-l-2 border-[#B08C3D] pl-2.5">
+            Capricorn is a merger-arb bet paying ~3% for Genel's cash exit, with the entire
+            spread riding on one EGPC signature.
           </p>
           <p className="mt-2.5 font-serif text-[13px] leading-relaxed text-[#5C6670]">
-            <strong className="text-[#10202F]">Why now</strong> — Pipeline flows resumed in June
-            and the first payment cycle confirmed
+            <strong className="text-[#10202F]">Why now</strong> — Genel agreed to buy Capricorn
+            for $360m cash yesterday; at 346p the market still prices meaningful doubt about a
+            deal whose real risk is a single administrative signature in Cairo…
           </p>
         </div>
         <div className="rounded-b-sm bg-gradient-to-b from-transparent to-[#FBFAF6] px-5 pb-4">
@@ -64,9 +72,12 @@ function MemoArtifact() {
             <span className="font-mono text-[8px] tracking-widest text-[#5C6670]">
               FACT-CHECKED ✓ · 5Y CHART · SOURCES · PDF
             </span>
-            <span className="font-mono text-[8px] tracking-widest text-[#B08C3D]">
-              REPLY TO REFINE →
-            </span>
+            <a
+              href="/sample-note.html"
+              className="font-mono text-[8px] tracking-widest text-[#B08C3D] hover:underline"
+            >
+              READ THE FULL NOTE →
+            </a>
           </div>
         </div>
       </div>
@@ -189,12 +200,20 @@ export default async function Home() {
               <li>Fact-checked, chart, sources, PDF</li>
               <li>Replies still teach your analyst</li>
             </ul>
-            <a
-              href="#subscribe"
-              className="mt-8 inline-block border border-white/25 px-5 py-2 font-mono text-[11px] tracking-[0.15em] text-[#FBFAF6] transition-colors hover:border-[#B08C3D] hover:text-[#B08C3D]"
-            >
-              START FREE
-            </a>
+            <div className="mt-8 flex items-center gap-4">
+              <a
+                href="#subscribe"
+                className="inline-block border border-white/25 px-5 py-2 font-mono text-[11px] tracking-[0.15em] text-[#FBFAF6] transition-colors hover:border-[#B08C3D] hover:text-[#B08C3D]"
+              >
+                START FREE
+              </a>
+              <a
+                href="/sample-note.html"
+                className="font-mono text-[11px] tracking-[0.15em] text-[#8FA0B0] transition-colors hover:text-[#B08C3D]"
+              >
+                READ A SAMPLE →
+              </a>
+            </div>
           </div>
           <div className="border border-[#B08C3D] bg-[#10202F] p-8">
             <p className="font-mono text-[11px] tracking-[0.2em] text-[#B08C3D]">THE DESK</p>
