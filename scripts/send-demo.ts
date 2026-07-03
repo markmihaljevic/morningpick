@@ -13,7 +13,7 @@ import { writeFileSync } from "fs";
 import { db } from "../lib/db";
 import type { Profile } from "../lib/profile";
 import { type ScreenParams } from "../lib/screens";
-import { getCoverageContext, coverageForPrompt } from "../lib/coverage";
+import { getCoverageContext, coverageForPrompt, buildBookRows } from "../lib/coverage";
 import { decideNote, fallbackNote, type NoteKind } from "../lib/desk-editor";
 import { selectIdeaWithPreflight } from "../lib/select-idea";
 import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "../lib/fmp";
@@ -214,6 +214,10 @@ async function main() {
     stats: memoKind === "review" ? [] : buildKeyStats(data),
     street: memoKind === "review" ? [] : buildStreetItems(data),
     comps: memoKind === "review" ? [] : buildCompsRows(ticker, data),
+    book:
+      process.env.FORCE_BOOK || new Date().getUTCDay() === 1 || memoKind === "review"
+        ? buildBookRows(coverageItems)
+        : [],
     meta: memoKind === "review" ? null : memo.meta,
     primarySources,
     chartUrl,

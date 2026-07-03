@@ -6,6 +6,7 @@ import type { KeyStat } from "../stats";
 import type { StreetItem } from "../street";
 import type { PrimarySource } from "../enrich-sources";
 import type { CompsRow } from "../comps";
+import type { BookRow } from "../coverage";
 
 const MONO = "Menlo, Consolas, 'Courier New', monospace";
 
@@ -31,6 +32,8 @@ export interface MemoEmailArgs {
   primarySources?: PrimarySource[];
   chartUrl?: string | null;
   comps?: CompsRow[];
+  /** Open calls, shown as the Monday ledger strip. */
+  book?: BookRow[];
   sources?: MemoSource[];
   pdfUrl?: string | null;
 }
@@ -196,6 +199,40 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
               </tr>`,
             )
             .join("\n")}
+        </table>
+      </div>`,
+    );
+  }
+
+  // The book: open calls marked to market — accountability, weekly.
+  if (args.book && args.book.length > 0) {
+    sections.push(
+      `<div style="margin:26px 0 0;">
+        ${sectionLabel("YOUR BOOK — OPEN CALLS")}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+          <tr>
+            ${["", "PITCHED", "NOW", "RETURN", ""]
+              .map(
+                (h, i) =>
+                  `<td style="padding:2px 0 6px;font-family:${MONO};font-size:8.5px;letter-spacing:1.2px;color:${BRAND.slate};${i > 0 && i < 4 ? "text-align:right;" : ""}">${h}</td>`,
+              )
+              .join("")}
+          </tr>
+          ${args.book
+            .map((b) => {
+              const ret = b.returnPct;
+              const retColor = ret === null ? BRAND.slate : ret >= 0 ? "#2E6B4F" : "#9B3D3D";
+              const fmt = (v: number | null) =>
+                v === null ? "—" : v >= 100 ? v.toFixed(0) : v.toFixed(2);
+              return `<tr>
+              <td style="padding:4px 0;border-top:1px solid ${BRAND.rule};font-family:${MONO};font-size:11px;font-weight:700;color:${BRAND.ink};">${escapeHtml(b.ticker)}</td>
+              <td style="padding:4px 0;border-top:1px solid ${BRAND.rule};text-align:right;font-family:${MONO};font-size:11px;color:${BRAND.slate};">${fmt(b.pitchPrice)} <span style="font-size:9px;">(${escapeHtml(b.date.slice(5))})</span></td>
+              <td style="padding:4px 0;border-top:1px solid ${BRAND.rule};text-align:right;font-family:${MONO};font-size:11px;color:${BRAND.ink};">${fmt(b.priceNow)}</td>
+              <td style="padding:4px 0;border-top:1px solid ${BRAND.rule};text-align:right;font-family:${MONO};font-size:11px;font-weight:700;color:${retColor};">${ret === null ? "—" : `${ret > 0 ? "+" : ""}${ret}%`}</td>
+              <td style="padding:4px 0 4px 10px;border-top:1px solid ${BRAND.rule};font-family:${MONO};font-size:8.5px;letter-spacing:1px;color:${b.status === "watching" ? BRAND.gold : BRAND.slate};">${b.status === "watching" ? "WATCHING" : ""}</td>
+            </tr>`;
+            })
+            .join("")}
         </table>
       </div>`,
     );

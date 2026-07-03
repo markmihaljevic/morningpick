@@ -16,7 +16,7 @@ import { buildCompsRows } from "@/lib/comps";
 import { buildStreetItems } from "@/lib/street";
 import { discoverPrimarySources } from "@/lib/enrich-sources";
 import { isDailyPlan } from "@/lib/billing";
-import { getCoverageContext, coverageForPrompt } from "@/lib/coverage";
+import { getCoverageContext, coverageForPrompt, buildBookRows } from "@/lib/coverage";
 import { decideNote, fallbackNote, type NoteKind } from "@/lib/desk-editor";
 import { selectIdeaWithPreflight } from "@/lib/select-idea";
 import { sendEmail, replyAddress } from "@/lib/resend";
@@ -157,6 +157,8 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
   let html: string;
   let ticker = "";
   let title: string;
+  // Follow-up verdicts (stands/watching/closed) update the book after send.
+  let metaForVerdict: { call_status?: string; close_reason?: string } | null = null;
 
   if (existingMemo) {
     // Generated but not sent — reuse it instead of paying for regeneration.
@@ -312,9 +314,13 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
         : buildFiveYearChartUrl(ticker, companyProfile?.currency),
     ]);
     title = memo.title;
+    if (memoKind === "followup") metaForVerdict = memo.meta;
     const stats = memoKind === "review" ? [] : buildKeyStats(data);
     const street = memoKind === "review" ? [] : buildStreetItems(data);
     const comps = memoKind === "review" ? [] : buildCompsRows(ticker, data);
+    // The Monday ledger: open calls marked to market (also under review notes).
+    const isMonday = new Date().getUTCDay() === 1;
+    const book = isMonday || memoKind === "review" ? buildBookRows(coverageItems) : [];
     const pitch = extractPitchPrice(data);
     const dateLine = new Date(delivery.delivery_date + "T00:00:00Z").toLocaleDateString("en-GB", {
       day: "numeric",
@@ -343,6 +349,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       primarySources,
       chartUrl,
       comps,
+      book,
       sources: memo.sources,
       pdfUrl: `${config().APP_URL}/api/memo/${memoId}/pdf`,
     });
@@ -381,4 +388,31 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     subscriberId: subscriber.id,
     payload: { memoId, ticker, resendId },
   });
+
+  // A follow-up's verdict updates the book: the original call's status
+  // changes across every note on that ticker for this subscriber.
+  const verdict = existingMemo
+    ? null
+    : ((): { status: string; reason: string | null } | null => {
+        const meta = metaForVerdict;
+        if (!meta || !meta.call_status || meta.call_status === "n/a") return null;
+        if (meta.call_status === "closed") return { status: "closed", reason: meta.close_reason ?? null };
+        if (meta.call_status === "watching") return { status: "watching", reason: null };
+        return { status: "active", reason: null };
+      })();
+  if (verdict) {
+    await db()
+      .from("memos")
+      .update({
+        call_status: verdict.status,
+        call_close_reason: verdict.reason,
+        call_closed_at: verdict.status === "closed" ? new Date().toISOString() : null,
+      })
+      .eq("subscriber_id", subscriber.id)
+      .eq("ticker", ticker);
+    await logEvent("call_status_changed", {
+      subscriberId: subscriber.id,
+      payload: { ticker, status: verdict.status, reason: verdict.reason },
+    });
+  }
 }

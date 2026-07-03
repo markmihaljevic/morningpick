@@ -227,6 +227,8 @@ export async function generateMemo(args: {
 
 export interface MemoMeta {
   one_liner: string;
+  call_status?: "stands" | "watching" | "closed" | "n/a";
+  close_reason?: string;
   conviction: number; // 1–10
   horizon: string; // e.g. "6–18 months"
   style_tags: string[]; // ≤3 short tags, e.g. ["Merger arb", "Net cash"]
@@ -238,6 +240,16 @@ const META_SCHEMA = {
     one_liner: {
       type: "string",
       description: "The whole idea in one punchy sentence, max 140 characters, no ticker prefix",
+    },
+    call_status: {
+      type: "string",
+      enum: ["stands", "watching", "closed", "n/a"],
+      description:
+        "FOLLOW-UP notes only (Scorecard section present): does the original call stand, need watching, or is it closed (played out or broken)? 'n/a' for any other note type.",
+    },
+    close_reason: {
+      type: "string",
+      description: "One line, only when call_status is closed",
     },
     conviction: {
       type: "integer",
@@ -251,7 +263,7 @@ const META_SCHEMA = {
       description: "Up to 3 two-word style tags, e.g. 'Deep value', 'Merger arb', 'Quality compounder'",
     },
   },
-  required: ["one_liner", "conviction", "horizon", "style_tags"],
+  required: ["one_liner", "conviction", "horizon", "style_tags", "call_status"],
   additionalProperties: false,
 } as const;
 
@@ -279,6 +291,8 @@ export async function extractMemoMeta(markdown: string): Promise<MemoMeta | null
     const parsed = JSON.parse(text && "text" in text ? text.text : "{}") as MemoMeta;
     return {
       one_liner: (parsed.one_liner ?? "").replace(/<[^>]*>/g, "").slice(0, 160),
+      call_status: parsed.call_status ?? "n/a",
+      close_reason: (parsed.close_reason ?? "").slice(0, 200),
       conviction: Math.min(10, Math.max(1, Math.round(parsed.conviction ?? 5))),
       horizon: (parsed.horizon ?? "").slice(0, 30),
       style_tags: (parsed.style_tags ?? []).slice(0, 3).map((t) => String(t).slice(0, 24)),

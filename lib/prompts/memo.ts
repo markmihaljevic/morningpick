@@ -163,7 +163,7 @@ The triggering event, with the numbers.
 ## Scorecard
 Honest accounting of your original call: pitched at ${args.followup.priceThen ?? "?"} on ${args.followup.originalDate}, now ${args.followup.priceNow ?? "?"}. Which thesis points held, which broke. Own your misses plainly — credibility comes from the losers.
 ## The thesis now
-Does the original case still stand at today's price? Stronger, weaker, or done?
+Does the original case still stand at today's price? Stronger, weaker, or done? END this section with an explicit verdict line: **Call status: stands / watching / closed** — {one line why}. 'closed' means played out or broken — own it either way; closing calls is what makes the open ones mean something.
 ## What I'd watch
 Updated falsifiers and dates.
 

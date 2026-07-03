@@ -16,6 +16,7 @@ export interface CoverageItem {
   priceNow: number | null;
   returnPct: number | null;
   sentiment: string | null; // subscriber's reaction, if they replied
+  callStatus: string; // active | watching | closed
 }
 
 export interface TasteSignal {
@@ -52,7 +53,7 @@ export async function getCoverageContext(subscriberId: string): Promise<{
     .slice(0, 10);
   const { data: memos } = await db()
     .from("memos")
-    .select("id, ticker, delivery_date, title, kind, pitch_price, pitch_currency, extras")
+    .select("id, ticker, delivery_date, title, kind, pitch_price, pitch_currency, call_status, extras")
     .eq("subscriber_id", subscriberId)
     .not("sent_at", "is", null)
     .gte("delivery_date", since)
@@ -106,6 +107,7 @@ export async function getCoverageContext(subscriberId: string): Promise<{
       returnPct:
         pitch && priceNow ? Number((((priceNow - pitch) / pitch) * 100).toFixed(1)) : null,
       sentiment: sentimentByMemo.get(m.id) ?? null,
+      callStatus: (m as { call_status?: string }).call_status ?? "active",
     };
   });
 
@@ -132,8 +134,45 @@ export function coverageForPrompt(items: CoverageItem[]): unknown[] {
     pitchedAt: i.pitchPrice,
     now: i.priceNow,
     returnPct: i.returnPct,
+    callStatus: i.callStatus,
     subscriberReaction: i.sentiment,
   }));
+}
+
+/** One open call in the ledger strip. */
+export interface BookRow {
+  ticker: string;
+  date: string;
+  pitchPrice: number | null;
+  currency: string | null;
+  priceNow: number | null;
+  returnPct: number | null;
+  status: string; // active | watching
+}
+
+/**
+ * The open book: latest note per ticker, closed calls and reviews excluded.
+ * This is the accountability strip — pitched price against today's, dated.
+ */
+export function buildBookRows(items: CoverageItem[]): BookRow[] {
+  const latest = new Map<string, CoverageItem>();
+  for (const i of items) {
+    if (i.ticker === "REVIEW" || i.kind === "review") continue;
+    const existing = latest.get(i.ticker);
+    if (!existing || i.date > existing.date) latest.set(i.ticker, i);
+  }
+  return [...latest.values()]
+    .filter((i) => i.callStatus !== "closed")
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map((i) => ({
+      ticker: i.ticker,
+      date: i.date,
+      pitchPrice: i.pitchPrice,
+      currency: i.pitchCurrency,
+      priceNow: i.priceNow,
+      returnPct: i.returnPct,
+      status: i.callStatus,
+    }));
 }
 
 interface EarningsRow {
