@@ -24,6 +24,7 @@ Rules:
 export interface AnswerResult {
   sent: boolean;
   reason?: string;
+  markdown?: string;
 }
 
 /**
@@ -38,6 +39,8 @@ export async function answerQuestions(args: {
   memo: { ticker: string; title: string | null; content_md: string; delivery_date: string } | null;
   /** When the reply names a note we don't have stored (e.g. a demo): its ticker + title from the subject line. */
   subjectContext?: { ticker: string; title: string } | null;
+  /** Earlier Q&A exchanges in this thread — the desk remembers what it said. */
+  priorThread?: { question: string; answer: string }[];
   questions: string[];
   profile: Profile;
   feedbackApplied: boolean;
@@ -94,6 +97,11 @@ export async function answerQuestions(args: {
             ? `<replied_to_note ticker="${args.subjectContext.ticker}" title="${args.subjectContext.title.replace(/"/g, "'")}" note="The subscriber replied to this research note. You do NOT have its full text — answer about THIS company from the dataset and web research, and don't pretend to quote the note.">\n</replied_to_note>\n\n`
             : "") +
         (dataset ? `<dataset>\n${JSON.stringify(dataset)}\n</dataset>\n\n` : "") +
+        (args.priorThread && args.priorThread.length > 0
+          ? `<prior_thread note="your earlier exchanges in this same thread — don't repeat yourself, build on what you already told them">\n${args.priorThread
+              .map((t) => `Q: ${t.question.slice(0, 400)}\nA: ${t.answer.slice(0, 1500)}`)
+              .join("\n---\n")}\n</prior_thread>\n\n`
+          : "") +
         `<subscriber_profile>${JSON.stringify(args.profile.structured)}</subscriber_profile>\n\n` +
         `<questions>\n${args.questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n</questions>\n\nAnswer the questions.`,
     },
@@ -138,5 +146,5 @@ export async function answerQuestions(args: {
     subscriberId: args.subscriberId,
     payload: { memoId: args.memoId, questions: args.questions.length },
   });
-  return { sent: true };
+  return { sent: true, markdown };
 }

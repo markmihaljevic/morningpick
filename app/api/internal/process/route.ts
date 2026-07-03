@@ -174,6 +174,21 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     const coverage = coverageForPrompt(coverageItems);
     const firstNote = coverageItems.length === 0;
 
+    // Visible learning: what they told the analyst in the last 48 hours.
+    const { data: recentFeedback } = await db()
+      .from("feedback")
+      .select("interpretation, created_at")
+      .eq("subscriber_id", subscriber.id)
+      .gte("created_at", new Date(Date.now() - 48 * 3600 * 1000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(3);
+    const recentProfileChange = (recentFeedback ?? [])
+      .map((f) => f.interpretation as { is_investment_feedback?: boolean; ack_summary?: string } | null)
+      .filter((i) => i?.is_investment_feedback && i?.ack_summary)
+      .map((i) => i!.ack_summary!)
+      .slice(0, 2)
+      .join(" · ") || undefined;
+
     // The desk editor decides what kind of note this morning deserves.
     let decision = await decideNote({ coverageItems, dailyPlan: isDailyPlan(subscriber.plan) });
 
@@ -309,6 +324,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
         followup: followupContext,
         secondLook: secondLookContext,
         review: reviewContext,
+        recentProfileChange,
         referenceLinks,
       }),
       memoKind === "review"

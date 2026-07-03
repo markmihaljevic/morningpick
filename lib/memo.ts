@@ -51,6 +51,7 @@ export async function generateMemo(args: {
   followup?: FollowupContext;
   secondLook?: SecondLookContext;
   review?: ReviewContext;
+  recentProfileChange?: string;
   referenceLinks?: { label: string; url: string }[];
 }): Promise<GeneratedMemo> {
   const cfg = config();
@@ -65,6 +66,7 @@ export async function generateMemo(args: {
     followup: args.followup,
     secondLook: args.secondLook,
     review: args.review,
+    recentProfileChange: args.recentProfileChange,
     referenceLinks: args.referenceLinks,
   });
 
@@ -322,6 +324,7 @@ export async function generateVerifiedMemo(args: {
   followup?: FollowupContext;
   secondLook?: SecondLookContext;
   review?: ReviewContext;
+  recentProfileChange?: string;
   referenceLinks?: { label: string; url: string }[];
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   let memo = await generateMemo(args);

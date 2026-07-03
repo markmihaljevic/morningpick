@@ -86,9 +86,19 @@ export function buildMemoUserPrompt(args: {
   followup?: FollowupContext;
   secondLook?: SecondLookContext;
   review?: ReviewContext;
+  /** What the subscriber told the analyst in the last day or two — acknowledged once, visibly. */
+  recentProfileChange?: string;
   referenceLinks?: { label: string; url: string }[]; // curated links to weave in inline
 }): string {
   const { profile, ticker, companyName, data, today, selectionRationale } = args;
+
+  const learningBlock = args.recentProfileChange
+    ? `<recent_profile_update note="They told you this recently. Acknowledge it in ONE early clause where it genuinely shaped today's choice — they should SEE the dial moved (e.g. 'You asked for less energy exposure — today, specialty chemicals'). Once, naturally, never gratuitously.">
+${args.recentProfileChange}
+</recent_profile_update>
+
+`
+    : "";
 
   const coverageBlock =
     args.coverage && args.coverage.length > 0
@@ -184,7 +194,7 @@ ${
           .map((l) => `- ${l.label}: ${l.url}`)
           .join("\n")}\n</reference_links>\n\n`
       : ""
-  }${coverageBlock}${followupBlock}${secondLookBlock}${reviewBlock}${
+  }${learningBlock}${coverageBlock}${followupBlock}${secondLookBlock}${reviewBlock}${
     args.review
       ? ""
       : `Chosen ticker: ${ticker}${companyName ? ` (${companyName})` : ""}\n`
