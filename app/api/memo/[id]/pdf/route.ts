@@ -8,6 +8,7 @@ import type { KeyStat } from "@/lib/stats";
 import type { StreetItem } from "@/lib/street";
 import type { ResearchLink } from "@/lib/research-links";
 import type { MemoSource, MemoMeta } from "@/lib/memo";
+import type { PrimarySource } from "@/lib/enrich-sources";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -42,6 +43,7 @@ export async function GET(
     stats?: KeyStat[];
     street?: StreetItem[];
     meta?: MemoMeta | null;
+    primarySources?: PrimarySource[];
     dateLine?: string;
   };
 
@@ -55,6 +57,7 @@ export async function GET(
       stats: extras.stats,
       street: extras.street,
       meta: extras.meta,
+      primarySources: extras.primarySources,
       chartUrl: extras.chartUrl,
       researchLinks: extras.researchLinks,
       sources: extras.sources,

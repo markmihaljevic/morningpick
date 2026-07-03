@@ -14,6 +14,7 @@ import { buildResearchLinks } from "@/lib/research-links";
 import { extractPitchPrice } from "@/lib/performance";
 import { buildKeyStats } from "@/lib/stats";
 import { buildStreetItems } from "@/lib/street";
+import { discoverPrimarySources } from "@/lib/enrich-sources";
 import { sendEmail, replyAddress } from "@/lib/resend";
 
 export const runtime = "nodejs";
@@ -201,7 +202,10 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     const companyProfile = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
       | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
       | undefined;
-    const chartUrl = await buildFiveYearChartUrl(ticker, companyProfile?.currency);
+    const [chartUrl, primarySources] = await Promise.all([
+      buildFiveYearChartUrl(ticker, companyProfile?.currency),
+      discoverPrimarySources(ticker, companyName ?? ticker),
+    ]);
     const researchLinks = buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
     const stats = buildKeyStats(data);
     const street = buildStreetItems(data);
@@ -222,6 +226,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       stats,
       street,
       meta: memo.meta,
+      primarySources,
       chartUrl,
       researchLinks,
       sources: memo.sources,
@@ -240,7 +245,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       reply_address: replyAddress(memoId),
       pitch_price: pitch.price,
       pitch_currency: pitch.currency,
-      extras: { chartUrl, researchLinks, sources: memo.sources, stats, street, meta: memo.meta, dateLine },
+      extras: { chartUrl, researchLinks, sources: memo.sources, stats, street, meta: memo.meta, primarySources, dateLine },
     });
     if (memoError) throw new Error(`Memo insert failed: ${memoError.message}`);
   }

@@ -6,6 +6,7 @@ import type { KeyStat } from "../stats";
 import type { ResearchLink } from "../research-links";
 import type { MemoSource, MemoMeta } from "../memo";
 import type { StreetItem } from "../street";
+import type { PrimarySource } from "../enrich-sources";
 
 const styles = StyleSheet.create({
   page: {
@@ -92,6 +93,7 @@ export interface MemoPdfArgs {
   stats?: KeyStat[];
   street?: StreetItem[];
   meta?: MemoMeta | null;
+  primarySources?: PrimarySource[];
   chartUrl?: string | null;
   researchLinks?: ResearchLink[];
   sources?: MemoSource[];
@@ -304,6 +306,25 @@ export function MemoPdf(args: MemoPdfArgs) {
         {args.chartUrl && (
           // eslint-disable-next-line jsx-a11y/alt-text
           <Image src={args.chartUrl} style={styles.chart} />
+        )}
+
+        {args.primarySources && args.primarySources.length > 0 && (
+          <View>
+            <Text style={styles.sectionLabel}>WORTH YOUR TIME</Text>
+            {args.primarySources.map((s, i) => (
+              <Text key={i} style={{ marginBottom: 4, fontSize: 9.5 }}>
+                <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 6, color: BRAND.gold }}>
+                  {s.type.replace("_", " ").toUpperCase()}
+                </Text>
+                {"   "}
+                <Link src={s.url} style={{ color: BRAND.ink, fontFamily: "Times-Bold" }}>
+                  {s.title}
+                </Link>
+                {" — "}
+                <Text style={{ color: BRAND.slate }}>{s.note}</Text>
+              </Text>
+            ))}
+          </View>
         )}
 
         {args.researchLinks && args.researchLinks.length > 0 && (

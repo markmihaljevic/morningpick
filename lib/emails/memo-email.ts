@@ -5,24 +5,16 @@ import type { MemoSource, MemoMeta } from "../memo";
 import type { ResearchLink } from "../research-links";
 import type { KeyStat } from "../stats";
 import type { StreetItem } from "../street";
+import type { PrimarySource } from "../enrich-sources";
 
 const MONO = "Menlo, Consolas, 'Courier New', monospace";
 
-/** A rough sector word for the reply-teaching examples; safe fallback. */
-function inferSectorWord(markdown: string): string {
-  const m = markdown.toLowerCase();
-  for (const [word, hints] of [
-    ["banks", ["bank", "lender"]],
-    ["oil & gas", ["oil", "gas", "e&p", "energy"]],
-    ["miners", ["mining", "miner"]],
-    ["biotech", ["biotech", "pharma", "clinical"]],
-    ["insurers", ["insurance", "insurer"]],
-    ["retailers", ["retail"]],
-  ] as [string, string[]][]) {
-    if (hints.some((h) => m.includes(h))) return word;
-  }
-  return "this sector";
-}
+const SOURCE_TYPE_LABEL: Record<PrimarySource["type"], string> = {
+  interview: "INTERVIEW",
+  earnings_call: "EARNINGS CALL",
+  deep_dive: "DEEP DIVE",
+  analysis: "ANALYSIS",
+};
 
 export interface MemoEmailArgs {
   markdown: string;
@@ -32,6 +24,7 @@ export interface MemoEmailArgs {
   stats?: KeyStat[];
   street?: StreetItem[];
   meta?: MemoMeta | null;
+  primarySources?: PrimarySource[];
   chartUrl?: string | null;
   researchLinks?: ResearchLink[];
   sources?: MemoSource[];
@@ -39,41 +32,20 @@ export interface MemoEmailArgs {
 }
 
 function sectionLabel(text: string): string {
-  return `<p style="margin:0 0 10px;font-family:${MONO};font-size:11px;letter-spacing:2.5px;color:${BRAND.gold};font-weight:700;">${text}</p>`;
+  return `<div style="margin:28px 0 10px;border-top:1px solid ${BRAND.rule};padding-top:14px;">
+    <span style="font-family:${MONO};font-size:11px;letter-spacing:2.5px;color:${BRAND.gold};font-weight:700;">${text}</span>
+  </div>`;
 }
 
-/** Verdict chips: conviction, horizon, style tags. */
-function verdictRow(meta: MemoMeta): string {
-  const chip = (label: string, value: string, emphasis = false) =>
-    `<td style="padding:0 8px 0 0;"><div style="border:1px solid ${emphasis ? BRAND.gold : BRAND.rule};background:${emphasis ? "#faf3e3" : "#ffffff"};padding:6px 11px;white-space:nowrap;">
-      <span style="font-family:${MONO};font-size:8px;letter-spacing:1.5px;color:${BRAND.slate};">${escapeHtml(label)}</span><br/>
-      <span style="font-family:${MONO};font-size:12px;font-weight:700;color:${BRAND.ink};">${escapeHtml(value)}</span>
-    </div></td>`;
-  const cells = [
-    chip("CONVICTION", `${meta.conviction}/10`, true),
-    chip("HORIZON", meta.horizon.toUpperCase()),
-    ...meta.style_tags.map((t) => chip("STYLE", t.toUpperCase())),
-  ].join("");
-  return `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 16px;"><tr>${cells}</tr></table>`;
-}
-
-/** The memo email — Morningpick research-note format. */
+/** The memo email — the Morningpick research note. */
 export function renderMemoEmail(args: MemoEmailArgs): string {
   const html = marked.parse(args.markdown, { async: false }) as string;
-  // H2 section names ("The idea", "Thesis"…) render as mono gold labels over
-  // a hairline rule — the section system of the note.
   const styled = html
     .replace(
       /<h1>/g,
-      `<h1 style="font-size:27px;line-height:1.25;margin:6px 0 14px;font-weight:700;color:${BRAND.ink};">`,
+      `<h1 style="font-size:26px;line-height:1.28;margin:4px 0 14px;font-weight:700;color:${BRAND.ink};">`,
     )
-    .replace(
-      /<h2>([\s\S]*?)<\/h2>/g,
-      (_, inner: string) =>
-        `<div style="margin:28px 0 10px;border-top:1px solid ${BRAND.rule};padding-top:14px;">
-          <span style="font-family:${MONO};font-size:11px;letter-spacing:2.5px;color:${BRAND.gold};font-weight:700;">${inner.toUpperCase()}</span>
-        </div>`,
-    )
+    .replace(/<h2>([\s\S]*?)<\/h2>/g, (_, inner: string) => sectionLabel(inner.toUpperCase()))
     .replace(/<h3>/g, `<h3 style="font-size:17px;line-height:1.4;margin:22px 0 6px;color:${BRAND.ink};">`)
     .replace(/<p>/g, '<p style="margin:0 0 15px;">')
     .replace(/<ol>/g, '<ol style="margin:0 0 15px;padding-left:22px;">')
@@ -83,42 +55,56 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
 
   const sections: string[] = [];
 
-  // Header block, injected after the H1 so the title leads:
-  // verdict chips → one-liner → key stats → street line.
+  // ── Header block, injected after the H1 ─────────────────────────────────
   const headerParts: string[] = [];
 
-  if (args.meta) headerParts.push(verdictRow(args.meta));
-
-  if (args.meta?.one_liner) {
+  // Verdict strip: one dark bar, not a row of boxes.
+  if (args.meta) {
+    const parts = [
+      `CONVICTION <span style="color:${BRAND.gold};">${args.meta.conviction}/10</span>`,
+      `HORIZON <span style="color:${BRAND.paper};">${escapeHtml(args.meta.horizon.toUpperCase())}</span>`,
+      ...args.meta.style_tags.map(
+        (t) => `<span style="color:${BRAND.paper};">${escapeHtml(t.toUpperCase())}</span>`,
+      ),
+    ];
     headerParts.push(
-      `<div style="border-left:3px solid ${BRAND.gold};background:#faf3e3;padding:11px 14px;margin:0 0 18px;">
-        <span style="font-family:${BRAND.serif};font-size:16px;font-style:italic;color:${BRAND.ink};">${escapeHtml(args.meta.one_liner)}</span>
+      `<div style="background-color:${BRAND.ink};padding:9px 14px;margin:2px 0 14px;">
+        <span style="font-family:${MONO};font-size:10.5px;letter-spacing:1.5px;color:#8FA0B0;">${parts.join('&nbsp;&nbsp;<span style="color:#3D4F60;">|</span>&nbsp;&nbsp;')}</span>
       </div>`,
     );
   }
 
+  if (args.meta?.one_liner) {
+    headerParts.push(
+      `<div style="border-left:3px solid ${BRAND.gold};padding:2px 0 2px 14px;margin:0 0 18px;">
+        <span style="font-family:${BRAND.serif};font-size:17px;font-style:italic;color:${BRAND.ink};line-height:1.5;">${escapeHtml(args.meta.one_liner)}</span>
+      </div>`,
+    );
+  }
+
+  // Key statistics — FT-style: horizontal rules only, right-aligned figures.
   if (args.stats && args.stats.length > 0) {
     const half = Math.ceil(args.stats.length / 2);
-    const renderRow = (row: KeyStat[]) =>
+    const renderRow = (row: KeyStat[], last: boolean) =>
       `<tr>${row
         .map(
-          (s) => `<td style="padding:9px 11px;border:1px solid ${BRAND.rule};background:#ffffff;width:${Math.floor(100 / half)}%;">
-          <div style="font-family:${MONO};font-size:8px;letter-spacing:1.5px;color:${BRAND.slate};">${escapeHtml(s.label.toUpperCase())}</div>
-          <div style="font-family:${MONO};font-size:13px;font-weight:700;color:${BRAND.ink};margin-top:2px;white-space:nowrap;">${escapeHtml(s.value)}</div>
+          (s) => `<td style="padding:8px 14px 8px 0;border-bottom:${last ? "2px solid " + BRAND.ink : "1px solid " + BRAND.rule};width:${Math.floor(100 / half)}%;white-space:nowrap;">
+          <span style="font-family:${MONO};font-size:8.5px;letter-spacing:1.2px;color:${BRAND.slate};">${escapeHtml(s.label.toUpperCase())}</span><br/>
+          <span style="font-family:${MONO};font-size:14px;font-weight:700;color:${BRAND.ink};">${escapeHtml(s.value)}</span>
         </td>`,
         )
         .join("")}</tr>`;
     const row2 = args.stats.slice(half);
     headerParts.push(
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 10px;">
-        ${renderRow(args.stats.slice(0, half))}${row2.length > 0 ? renderRow(row2) : ""}
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-top:2px solid ${BRAND.ink};margin:0 0 8px;">
+        ${renderRow(args.stats.slice(0, half), row2.length === 0)}${row2.length > 0 ? renderRow(row2, true) : ""}
       </table>`,
     );
   }
 
   if (args.street && args.street.length > 0) {
     headerParts.push(
-      `<p style="margin:0 0 20px;font-family:${MONO};font-size:10px;letter-spacing:0.5px;color:${BRAND.slate};">
+      `<p style="margin:0 0 8px;font-family:${MONO};font-size:10px;letter-spacing:0.5px;color:${BRAND.slate};line-height:2;">
         ${args.street
           .map(
             (s) =>
@@ -138,37 +124,33 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     sections.push(styled);
   }
 
+  // ── Evidence blocks ──────────────────────────────────────────────────────
   if (args.chartUrl) {
     sections.push(
       `<div style="margin:26px 0 0;">
-        <img src="${args.chartUrl}" alt="5-year price chart" width="604"
+        <img src="${args.chartUrl}" alt="5-year price chart" width="600"
              style="max-width:100%;height:auto;border:1px solid ${BRAND.rule};" />
       </div>`,
     );
   }
 
-  if (args.pdfUrl) {
+  // Worth your time: curated primary sources, only when something clears the bar.
+  if (args.primarySources && args.primarySources.length > 0) {
     sections.push(
-      `<div style="margin:26px 0 0;">
-        <a href="${args.pdfUrl}"
-           style="display:inline-block;background:${BRAND.ink};color:${BRAND.paper};font-family:${BRAND.sans};font-size:12px;letter-spacing:2px;padding:11px 22px;text-decoration:none;border-bottom:2px solid ${BRAND.gold};">
-          DOWNLOAD PDF ↧
-        </a>
-      </div>`,
-    );
-  }
-
-  if (args.researchLinks && args.researchLinks.length > 0) {
-    sections.push(
-      `<div style="margin:30px 0 0;">
-        ${sectionLabel("DIG DEEPER")}
-        <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
-          ${args.researchLinks
+      `<div style="margin:28px 0 0;">
+        ${sectionLabel("WORTH YOUR TIME")}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+          ${args.primarySources
             .map(
-              (l) => `<tr><td style="padding:0 0 7px;font-family:${BRAND.serif};font-size:15px;">
-                <span style="color:${BRAND.gold};">→</span>&nbsp;
-                <a href="${l.url}" style="color:${BRAND.ink};">${escapeHtml(l.label)}</a>
-              </td></tr>`,
+              (s) => `<tr>
+                <td style="padding:0 0 12px;vertical-align:top;width:110px;">
+                  <span style="display:inline-block;background:${BRAND.ink};color:${BRAND.gold};font-family:${MONO};font-size:8px;letter-spacing:1.2px;padding:3px 7px;">${SOURCE_TYPE_LABEL[s.type]}</span>
+                </td>
+                <td style="padding:0 0 12px;vertical-align:top;">
+                  <a href="${s.url}" style="font-family:${BRAND.serif};font-size:15px;color:${BRAND.ink};font-weight:700;">${escapeHtml(s.title)}</a><br/>
+                  <span style="font-family:${BRAND.sans};font-size:12.5px;color:${BRAND.slate};">${escapeHtml(s.note)}</span>
+                </td>
+              </tr>`,
             )
             .join("\n")}
         </table>
@@ -176,32 +158,39 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     );
   }
 
-  if (args.sources && args.sources.length > 0) {
+  // Compact utility row: PDF + registry research links in one line each.
+  const utilityLinks: string[] = [];
+  if (args.pdfUrl) {
+    utilityLinks.push(
+      `<a href="${args.pdfUrl}" style="color:${BRAND.ink};font-weight:700;">Download PDF ↧</a>`,
+    );
+  }
+  for (const l of args.researchLinks ?? []) {
+    utilityLinks.push(`<a href="${l.url}" style="color:${BRAND.slate};">${escapeHtml(l.label)}</a>`);
+  }
+  if (utilityLinks.length > 0) {
     sections.push(
       `<div style="margin:26px 0 0;">
-        ${sectionLabel("SOURCES CITED")}
-        <ul style="margin:0;padding-left:18px;font-family:${BRAND.sans};font-size:12px;color:${BRAND.slate};">
-          ${args.sources
-            .map(
-              (s) =>
-                `<li style="margin:0 0 5px;"><a href="${s.url}" style="color:${BRAND.slate};">${escapeHtml(s.title || s.url)}</a></li>`,
-            )
-            .join("\n")}
-        </ul>
+        ${sectionLabel("DIG DEEPER")}
+        <p style="margin:0;font-family:${BRAND.sans};font-size:13px;line-height:2.1;">
+          ${utilityLinks.join(` &nbsp;<span style="color:${BRAND.rule};">|</span>&nbsp; `)}
+        </p>
       </div>`,
     );
   }
 
-  // Teach the killer feature: the reply loop.
-  sections.push(
-    `<div style="margin:30px 0 0;border:1px dashed ${BRAND.rule};padding:13px 16px;">
-      <p style="margin:0;font-family:${MONO};font-size:10.5px;letter-spacing:0.5px;color:${BRAND.slate};line-height:1.8;">
-        <span style="color:${BRAND.gold};font-weight:700;">YOUR ANALYST LISTENS.</span>
-        Reply to this email — in plain language:<br/>
-        &nbsp;&nbsp;"more like this" · "go deeper on the risks next time" · "never pitch me ${escapeHtml(inferSectorWord(args.markdown))} again"
-      </p>
-    </div>`,
-  );
+  if (args.sources && args.sources.length > 0) {
+    sections.push(
+      `<div style="margin:22px 0 0;">
+        <p style="margin:0 0 6px;font-family:${MONO};font-size:9px;letter-spacing:2px;color:${BRAND.slate};">SOURCES CITED</p>
+        <p style="margin:0;font-family:${BRAND.sans};font-size:11px;line-height:1.9;color:${BRAND.slate};">
+          ${args.sources
+            .map((s) => `<a href="${s.url}" style="color:${BRAND.slate};">${escapeHtml(s.title || s.url)}</a>`)
+            .join(" · ")}
+        </p>
+      </div>`,
+    );
+  }
 
   return emailLayout(sections.join("\n"), {
     unsubscribeToken: args.unsubscribeToken,

@@ -35,6 +35,9 @@ React to the analyst data in the dataset (consensus rating, price targets, forwa
 ## Ownership & insider activity
 ONLY if insiderTrades in the dataset is non-empty: read the pattern (who, size, price, direction) and say what it signals. Omit this section entirely when there is no data — never write "no data available".
 
+## {One bespoke section — when the situation demands it}
+If this idea has a dimension the standard sections can't carry, add ONE extra section with its own title where it fits best: "The timeline" for a deal or special situation, "Sum of the parts" for a holdco, "Unit economics" for a scaling business, "The balance sheet" when that IS the story. Skip it when the standard sections suffice — most days they do.
+
 ## Risks
 Three honest, specific bear points. The best short-seller's version of this stock, not compliance boilerplate.
 
