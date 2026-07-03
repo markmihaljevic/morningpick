@@ -15,7 +15,7 @@ import type { Profile } from "../lib/profile";
 import { type ScreenParams } from "../lib/screens";
 import { getCoverageContext, coverageForPrompt, buildBookRows } from "../lib/coverage";
 import { decideNote, fallbackNote, type NoteKind } from "../lib/desk-editor";
-import { selectIdeaWithPreflight } from "../lib/select-idea";
+import { selectIdeaWithPreflight, updateWatchlist } from "../lib/select-idea";
 import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "../lib/fmp";
 import { generateVerifiedMemo } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
@@ -110,6 +110,14 @@ async function main() {
       memoKind = decision.kind;
       console.error(`Fallback decision: ${decision.kind} — ${decision.reason}`);
     }
+    await updateWatchlist({
+      subscriberId: subscriber.id,
+      pickedTicker: decision.kind === "idea" ? idea.ticker : null,
+      flagged: idea.flagged,
+      upcomingEarnings: idea.upcomingEarnings,
+    });
+    console.error(`Watchlist flagged: ${idea.flagged.map((f) => f.ticker).join(", ") || "none"}`);
+
     if (decision.kind === "idea") {
       ticker = idea.ticker;
       companyName = idea.companyName;

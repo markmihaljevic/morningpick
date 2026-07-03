@@ -43,8 +43,22 @@ const FINAL_SCHEMA = {
       description:
         "1-10. How strong the 'why today' is: 8-10 live corporate event, 5-7 upcoming catalyst (earnings, decision date), 1-4 statistical cheapness only",
     },
+    watchlist: {
+      type: "array",
+      description:
+        "Up to 3 shortlist names NOT picked today but genuinely worth tracking — a catalyst is coming or the setup is ripening. Empty if none deserve it.",
+      items: {
+        type: "object",
+        properties: {
+          ticker: { type: "string" },
+          reason: { type: "string", description: "one line: why track it, what to wait for" },
+        },
+        required: ["ticker", "reason"],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ["ticker", "rationale", "catalyst_strength"],
+  required: ["ticker", "rationale", "catalyst_strength", "watchlist"],
   additionalProperties: false,
 } as const;
 
@@ -66,12 +80,20 @@ export interface Taste {
   disliked: string[];
 }
 
+export interface WatchlistEntry {
+  ticker: string;
+  name: string | null;
+  reason: string;
+  nextCatalystDate: string | null;
+}
+
 export async function shortlistCandidates(
   profile: Profile,
   pool: Candidate[],
   excludedTickers: string[],
   recentMemos: { ticker: string }[],
   taste?: Taste,
+  watchlist?: WatchlistEntry[],
 ): Promise<Candidate[]> {
   const excluded = new Set(excludedTickers.map((t) => t.toUpperCase()));
   const avoid = Array.isArray(profile.structured?.avoid_tickers)
@@ -81,6 +103,18 @@ export async function shortlistCandidates(
 
   let eligible = pool.filter((c) => !excluded.has(c.ticker.toUpperCase()));
   if (eligible.length === 0) throw new Error("No eligible candidates after exclusions.");
+
+  // The pipeline: watchlist names join the pool even when today's screens
+  // rotated past them — a flagged setup keeps its seat until it ripens.
+  if (watchlist && watchlist.length > 0) {
+    const inPool = new Set(eligible.map((c) => c.ticker.toUpperCase()));
+    for (const w of watchlist) {
+      const t = w.ticker.toUpperCase();
+      if (!inPool.has(t) && !excluded.has(t)) {
+        eligible.push({ ticker: w.ticker, name: w.name ?? w.ticker } as Candidate);
+      }
+    }
+  }
 
   if (eligible.length > MAX_POOL_FOR_PROMPT) {
     // Deterministic thinning: keep every k-th candidate rather than a biased head-slice.
@@ -115,6 +149,11 @@ export async function shortlistCandidates(
           `<recent_memo_tickers>${JSON.stringify(recentMemos.map((m) => m.ticker))}</recent_memo_tickers>\n\n` +
           (taste && (taste.liked.length || taste.disliked.length)
             ? `<subscriber_reactions note="They replied positively/negatively to notes on these tickers — weight similar setups accordingly">liked: ${JSON.stringify(taste.liked)} disliked: ${JSON.stringify(taste.disliked)}</subscriber_reactions>\n\n`
+            : "") +
+          (watchlist && watchlist.length > 0
+            ? `<watchlist note="Names the desk flagged on earlier mornings as worth tracking. Strongly prefer including ones whose catalyst has arrived or is imminent.">\n${JSON.stringify(
+                watchlist.map((w) => ({ ticker: w.ticker, why: w.reason, catalyst: w.nextCatalystDate })),
+              )}\n</watchlist>\n\n`
             : "") +
           `<pool format="TICKER|name|sector|marketCapMillionsUSD|exchange|country">\n${compactPool(eligible)}\n</pool>`,
       },
@@ -164,7 +203,7 @@ export async function finalSelect(
   taste?: Taste,
   headlines?: Record<string, { date: string; title: string; site: string }[]>,
   upcomingEarnings?: Record<string, string>,
-): Promise<{ ticker: string; rationale: string }> {
+): Promise<{ ticker: string; rationale: string; watchlist?: { ticker: string; reason: string }[] }> {
   const response = await anthropic().messages.create({
     model: config().FEEDBACK_MODEL,
     max_tokens: 6000,
@@ -215,6 +254,7 @@ export async function finalSelect(
     ticker: string;
     rationale: string;
     catalyst_strength?: number;
+    watchlist?: { ticker: string; reason: string }[];
   };
   const valid = enriched.find((c) => c.ticker.toUpperCase() === parsed.ticker?.toUpperCase());
   if (!valid) {
@@ -229,8 +269,13 @@ export async function finalSelect(
     .replace(/[”"'}\]>\-\s]+$/g, "")
     .trim();
   const strength = Math.min(10, Math.max(1, Math.round(parsed.catalyst_strength ?? 5)));
+  const watch = (parsed.watchlist ?? [])
+    .slice(0, 3)
+    .filter((w) => w.ticker && w.ticker.toUpperCase() !== valid.ticker.toUpperCase())
+    .map((w) => ({ ticker: w.ticker, reason: (w.reason ?? "").slice(0, 240) }));
   return {
     ticker: valid.ticker,
     rationale: `${rationale} [catalyst strength ${strength}/10]`,
+    watchlist: watch,
   };
 }

@@ -18,7 +18,7 @@ import { discoverPrimarySources } from "@/lib/enrich-sources";
 import { isDailyPlan } from "@/lib/billing";
 import { getCoverageContext, coverageForPrompt, buildBookRows } from "@/lib/coverage";
 import { decideNote, fallbackNote, type NoteKind } from "@/lib/desk-editor";
-import { selectIdeaWithPreflight } from "@/lib/select-idea";
+import { selectIdeaWithPreflight, updateWatchlist } from "@/lib/select-idea";
 import { sendEmail, replyAddress } from "@/lib/resend";
 
 export const runtime = "nodejs";
@@ -237,6 +237,13 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
           payload: { attempts: idea.attempts, fellBackTo: decision.kind },
         });
       }
+
+      await updateWatchlist({
+        subscriberId: subscriber.id,
+        pickedTicker: decision.kind === "idea" ? idea.ticker : null,
+        flagged: idea.flagged,
+        upcomingEarnings: idea.upcomingEarnings,
+      });
 
       if (decision.kind === "idea") {
         ticker = idea.ticker;
