@@ -143,8 +143,33 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
     return NextResponse.json({ ok: true, skipped: "sender mismatch" });
   }
 
-  if (!memoId && !subscriberId) {
-    // Fallback linkage: sender's most recent memo.
+  // Subject-line resolution: the reply subject names the note being replied
+  // to ("Re: [demo] CNE.L — ..."). Trust it before any latest-memo guess —
+  // demo notes aren't in the memos table, and answering about the wrong
+  // company is worse than answering with less context.
+  const subjectTitle = (email.subject ?? "")
+    .replace(/^((re|fwd?|aw|wg):\s*)+/i, "")
+    .replace(/^\[demo\]\s*/i, "")
+    .trim();
+  let subjectContext: { ticker: string; title: string } | null = null;
+  if (!memoId && subjectTitle) {
+    const { data: bySubject } = await db()
+      .from("memos")
+      .select("id")
+      .eq("subscriber_id", subscriber.id)
+      .eq("title", subjectTitle)
+      .order("delivery_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (bySubject) {
+      memoId = bySubject.id;
+    } else {
+      const ticker = subjectTitle.match(/^([A-Z0-9]{1,6}(?:[.\-][A-Z0-9]{1,4}){0,2})\s+—/)?.[1];
+      if (ticker) subjectContext = { ticker, title: subjectTitle };
+    }
+  }
+  if (!memoId && !subjectContext && !subscriberId) {
+    // Last resort: sender's most recent memo.
     const { data: latest } = await db()
       .from("memos")
       .select("id")
@@ -197,6 +222,12 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
       memoContext = { ticker: memo.ticker, title: memo.title, date: memo.delivery_date };
       memoRow = memo;
     }
+  } else if (subjectContext) {
+    memoContext = {
+      ticker: subjectContext.ticker,
+      title: subjectContext.title,
+      date: new Date().toISOString().slice(0, 10),
+    };
   }
 
   const interpretation = await interpretFeedback({
@@ -242,6 +273,7 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
       unsubscribeToken: subscriber.unsubscribe_token,
       memoId,
       memo: memoRow,
+      subjectContext,
       questions: interpretation.questions.slice(0, 3),
       profile: {
         structured: (profile?.structured as Record<string, unknown>) ?? {},
