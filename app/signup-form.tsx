@@ -28,7 +28,7 @@ export function SignupForm() {
 
   if (state === "done") {
     return (
-      <p className="text-lg border border-[#1e222a] px-6 py-4">
+      <p className="text-lg border border-[#10202F] px-6 py-4">
         ✉️ {message}
       </p>
     );
@@ -51,12 +51,12 @@ export function SignupForm() {
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="you@example.com"
-        className="flex-1 border border-[#1e222a] bg-transparent px-4 py-3 text-base outline-none placeholder:text-[#8a8578] focus:bg-white"
+        className="flex-1 border border-[#10202F] bg-transparent px-4 py-3 text-base outline-none placeholder:text-[#5C6670] focus:bg-white"
       />
       <button
         type="submit"
         disabled={state === "loading"}
-        className="bg-[#1e222a] px-6 py-3 font-sans text-sm tracking-widest text-[#f6f5f1] disabled:opacity-60"
+        className="bg-[#10202F] px-6 py-3 font-sans text-sm tracking-widest text-[#FBFAF6] disabled:opacity-60"
       >
         {state === "loading" ? "…" : "SUBSCRIBE"}
       </button>

@@ -15,5 +15,5 @@ export function renderWelcomeEmail(unsubscribeToken: string): string {
     </ul>
     <p style="margin:0 0 14px;">You can also reply to any daily memo — "more like this",
     "too US-heavy", "never pitch airlines again" — and your future memos will adapt.</p>`;
-  return emailLayout(body, unsubscribeToken);
+  return emailLayout(body, { unsubscribeToken });
 }

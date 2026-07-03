@@ -1,8 +1,8 @@
 export function UnsubscribeResult({ done }: { done: boolean }) {
   return (
-    <main className="min-h-screen bg-[#f6f5f1] text-[#1e222a]">
+    <main className="min-h-screen bg-[#FBFAF6] text-[#10202F]">
       <div className="mx-auto max-w-2xl px-6 py-24 font-serif">
-        <p className="font-sans text-xs tracking-[0.25em] text-[#8a8578]">MORNINGPICK</p>
+        <p className="font-sans text-xs tracking-[0.25em] text-[#5C6670]">MORNINGPICK</p>
         {done ? (
           <>
             <h1 className="mt-6 text-4xl">You&apos;re unsubscribed.</h1>

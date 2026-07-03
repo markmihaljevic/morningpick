@@ -18,6 +18,7 @@ import { generateVerifiedMemo } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
 import { buildFiveYearChartUrl } from "../lib/chart";
 import { buildResearchLinks } from "../lib/research-links";
+import { buildKeyStats } from "../lib/stats";
 import { sendEmail, replyAddress } from "../lib/resend";
 
 async function main() {
@@ -96,6 +97,9 @@ async function main() {
   const html = renderMemoEmail({
     markdown: memo.markdown,
     unsubscribeToken: subscriber.unsubscribe_token,
+    preparedFor: subscriber.email,
+    dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+    stats: buildKeyStats(data),
     chartUrl,
     researchLinks: buildResearchLinks(selection.ticker, companyName ?? selection.ticker, companyProfile),
     sources: memo.sources,
