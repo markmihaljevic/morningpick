@@ -5,7 +5,13 @@ let client: Anthropic | null = null;
 
 export function anthropic(): Anthropic {
   if (!client) {
-    client = new Anthropic({ apiKey: config().ANTHROPIC_API_KEY });
+    client = new Anthropic({
+      apiKey: config().ANTHROPIC_API_KEY,
+      // Explicit client timeout: the SDK's "streaming required over 10 min"
+      // guard only respects the CLIENT-level timeout, and 24k max_tokens on
+      // the memo call trips its estimate. Real calls finish in 2-4 minutes.
+      timeout: 10 * 60 * 1000,
+    });
   }
   return client;
 }
