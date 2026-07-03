@@ -99,8 +99,22 @@ export async function generateMemo(args: {
   // 24k max_tokens trips the SDK's "streaming required over 10 minutes"
   // estimate — an explicit timeout opts out (real calls finish in 2-4 min).
   const requestOptions = { timeout: 10 * 60 * 1000 };
+  // A connection blip must not burn 8 minutes of funnel work — retry once.
+  const createWithRetry = async (
+    req: Anthropic.MessageCreateParamsNonStreaming,
+  ): Promise<Anthropic.Message> => {
+    try {
+      return await anthropic().messages.create(req, requestOptions);
+    } catch (e) {
+      if (e instanceof Anthropic.APIConnectionError) {
+        console.warn(`Anthropic connection error for ${args.ticker}; retrying once:`, e.message);
+        return await anthropic().messages.create(req, requestOptions);
+      }
+      throw e;
+    }
+  };
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: userPrompt }];
-  let response = await anthropic().messages.create({ ...baseRequest, messages }, requestOptions);
+  let response = await createWithRetry({ ...baseRequest, messages });
 
   // Accumulate web-search results and fetched pages across the whole turn
   // (including paused continuations) — they're the URL/title lookup for the
@@ -134,7 +148,7 @@ export async function generateMemo(args: {
   let continuations = 0;
   while (response.stop_reason === "pause_turn" && continuations < MAX_CONTINUATIONS) {
     messages.push({ role: "assistant", content: response.content });
-    response = await anthropic().messages.create({ ...baseRequest, messages }, requestOptions);
+    response = await createWithRetry({ ...baseRequest, messages });
     collectSearchResults(response.content);
     continuations++;
   }
