@@ -248,7 +248,7 @@ export async function generateVerifiedMemo(args: {
   followup?: FollowupContext;
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   let memo = await generateMemo(args);
-  let verification = await verifyMemo(memo.markdown, args.data);
+  let verification = await verifyMemo(memo.markdown, args.data, memo.sources);
   if (!verification.passed) {
     console.warn(
       `Verification found ${verification.critical_issues.length} critical issue(s) for ${args.ticker}; regenerating once.`,
@@ -262,7 +262,7 @@ export async function generateVerifiedMemo(args: {
           .map((i) => `- "${i.claim}": ${i.problem}`)
           .join("\n")}`,
     });
-    verification = await verifyMemo(memo.markdown, args.data);
+    verification = await verifyMemo(memo.markdown, args.data, memo.sources);
     if (!verification.passed) {
       throw new Error(
         `Memo for ${args.ticker} failed fact-verification twice: ${verification.critical_issues

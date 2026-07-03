@@ -166,6 +166,97 @@ export async function fetchStreetData(ticker: string): Promise<StreetData> {
   return { priceTargets, ratings, earnings, estimates };
 }
 
+export interface TranscriptExcerpt {
+  period: string;
+  year: number;
+  date: string;
+  excerpt: string; // opening remarks + Q&A tail, capped
+}
+
+const TRANSCRIPT_MAX_AGE_DAYS = 400;
+const TRANSCRIPT_HEAD_CHARS = 6_000;
+const TRANSCRIPT_TAIL_CHARS = 18_000;
+
+/**
+ * The latest earnings-call transcript, excerpted: opening management remarks
+ * plus the Q&A (which lives at the end and is where the honesty is).
+ * Fail-soft — plenty of small caps have no transcript.
+ */
+export async function fetchLatestTranscript(ticker: string): Promise<TranscriptExcerpt | null> {
+  try {
+    const dates = await fmpGet<{ quarter: number; fiscalYear: number; date: string }[]>(
+      "earning-call-transcript-dates",
+      { symbol: ticker },
+    );
+    const latest = (dates ?? [])
+      .filter((d) => d.date)
+      .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+    if (!latest) return null;
+    const ageDays = (Date.now() - Date.parse(latest.date)) / 86_400_000;
+    if (ageDays > TRANSCRIPT_MAX_AGE_DAYS) return null;
+
+    const rows = await fmpGet<{ content?: string; period?: string; date?: string }[]>(
+      "earning-call-transcript",
+      { symbol: ticker, year: latest.fiscalYear, quarter: latest.quarter },
+    );
+    const content = rows?.[0]?.content;
+    if (!content || content.length < 500) return null;
+
+    const excerpt =
+      content.length <= TRANSCRIPT_HEAD_CHARS + TRANSCRIPT_TAIL_CHARS
+        ? content
+        : content.slice(0, TRANSCRIPT_HEAD_CHARS) +
+          "\n\n[… middle of call omitted …]\n\n" +
+          content.slice(-TRANSCRIPT_TAIL_CHARS);
+    return {
+      period: rows?.[0]?.period ?? `Q${latest.quarter}`,
+      year: latest.fiscalYear,
+      date: latest.date,
+      excerpt,
+    };
+  } catch (e) {
+    console.error(`Transcript fetch failed for ${ticker} (non-fatal):`, e);
+    return null;
+  }
+}
+
+export interface Headline {
+  date: string;
+  title: string;
+  site: string;
+}
+
+/**
+ * Recent headlines for a set of tickers — ONE batched call, so news-aware
+ * selection costs a single request per subscriber per morning.
+ */
+export async function fetchHeadlines(
+  tickers: string[],
+  maxPerTicker = 3,
+  maxAgeDays = 14,
+): Promise<Record<string, Headline[]>> {
+  const out: Record<string, Headline[]> = {};
+  if (tickers.length === 0) return out;
+  try {
+    const rows = await fmpGet<
+      { symbol?: string; publishedDate?: string; title?: string; site?: string }[]
+    >("news/stock", { symbols: tickers.join(","), limit: 80 });
+    const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString().slice(0, 10);
+    for (const r of rows ?? []) {
+      if (!r.symbol || !r.title || !r.publishedDate) continue;
+      const date = r.publishedDate.slice(0, 10);
+      if (date < cutoff) continue;
+      const list = (out[r.symbol] ??= []);
+      if (list.length < maxPerTicker) {
+        list.push({ date, title: r.title.slice(0, 140), site: r.site ?? "" });
+      }
+    }
+  } catch (e) {
+    console.error("Headline fetch failed (non-fatal):", e);
+  }
+  return out;
+}
+
 export interface TickerData {
   profile: unknown;
   quote: unknown;
@@ -174,12 +265,13 @@ export interface TickerData {
   incomeStatement: unknown;
   insiderTrades: InsiderTrade[];
   street: StreetData;
+  latestTranscript: TranscriptExcerpt | null;
 }
 
-/** Fetch the grounding dataset for one ticker (~10 FMP requests, cached per day). */
+/** Fetch the grounding dataset for one ticker (~12 FMP requests, cached per day). */
 export async function fetchTickerData(ticker: string): Promise<TickerData> {
   const symbol = { symbol: ticker };
-  const [profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street] =
+  const [profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street, latestTranscript] =
     await Promise.all([
       fmpGet("profile", symbol),
       fmpGet("quote", symbol),
@@ -188,6 +280,7 @@ export async function fetchTickerData(ticker: string): Promise<TickerData> {
       fmpGet("income-statement", { ...symbol, limit: 2 }),
       fetchInsiderTrades(ticker),
       fetchStreetData(ticker),
+      fetchLatestTranscript(ticker),
     ]);
-  return { profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street };
+  return { profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street, latestTranscript };
 }

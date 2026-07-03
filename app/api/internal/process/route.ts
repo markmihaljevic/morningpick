@@ -6,7 +6,7 @@ import type { Profile } from "@/lib/profile";
 import { getSubscriberScreens, buildCandidatePool, type ScreenParams } from "@/lib/screens";
 import { shortlistCandidates, enrichShortlist, finalSelect } from "@/lib/selection";
 import { sendAdminAlert } from "@/lib/alerts";
-import { fetchTickerData } from "@/lib/fmp";
+import { fetchTickerData, fetchHeadlines } from "@/lib/fmp";
 import { generateVerifiedMemo } from "@/lib/memo";
 import { renderMemoEmail } from "@/lib/emails/memo-email";
 import { buildFiveYearChartUrl } from "@/lib/chart";
@@ -212,8 +212,11 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       );
       const pool = await buildCandidatePool(screens);
       const shortlist = await shortlistCandidates(profile, pool, excluded, recent, taste);
-      const enriched = await enrichShortlist(shortlist);
-      const selection = await finalSelect(profile, enriched, recent, taste);
+      const [enriched, headlines] = await Promise.all([
+        enrichShortlist(shortlist),
+        fetchHeadlines(shortlist.map((c) => c.ticker)),
+      ]);
+      const selection = await finalSelect(profile, enriched, recent, taste, headlines);
       ticker = selection.ticker;
       selectionRationale = selection.rationale;
       companyName = pool.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase())?.name;

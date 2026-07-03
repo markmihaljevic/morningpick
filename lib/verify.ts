@@ -44,20 +44,21 @@ const VERIFY_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-const VERIFY_SYSTEM = `You are a fact-checker for an investment memo before it is emailed to a subscriber.
+const VERIFY_SYSTEM = `You are a fact-checker for an investment memo before it is emailed to a subscriber. Your scope is NUMBERS AGAINST THE DATASET — nothing else.
 
-Audit every numerical claim in the memo against the provided FMP dataset:
-- A figure attributed to the data (prices, market cap, multiples, margins, growth rates, EPS, balance-sheet items, insider transactions) must match the dataset within reasonable rounding (~1-2%).
-- Figures explicitly attributed to a cited web source (a domain in parentheses) are OUT OF SCOPE — do not flag them; you cannot see those sources.
+- A figure attributed to the dataset (prices, market cap, multiples, margins, growth rates, EPS, balance-sheet items, insider transactions) must match the dataset within reasonable rounding (~1-2%).
 - Derived arithmetic (e.g. "up 14% year over year" computed from two dataset numbers) should be checked by recomputing it.
-- Flag as CRITICAL: contradictions with the dataset, invented figures presented as dataset facts, magnitude errors, or wrong currency/units.
-- Flag as MINOR: rounding beyond ~2%, vague attribution, stale phrasing.
-Do not comment on investment logic, style, or opinions — numbers only.`;
+- OUT OF SCOPE — never flag: claims about news and events (deals, announcements, bids, deadlines, corporate actions, people). The author had live web-search results that you CANNOT see; <web_sources> lists what they consulted. Absence from the dataset is NOT evidence a news claim is wrong. Only flag an event claim if it DIRECTLY CONTRADICTS the dataset.
+- OUT OF SCOPE: figures attributed to a cited web source (a domain in parentheses).
+- Flag as CRITICAL: dataset-attributed figures that contradict the dataset, invented figures presented as dataset facts, magnitude errors, wrong currency/units.
+- Flag as MINOR: rounding beyond ~2%, vague attribution.
+Do not comment on investment logic, style, opinions, or news accuracy — numbers against the dataset only.`;
 
 /** Audit a memo's figures against the grounding dataset. Fail-open on errors. */
 export async function verifyMemo(
   markdown: string,
   data: TickerData,
+  webSources: { url: string; title: string }[] = [],
 ): Promise<VerificationResult> {
   try {
     const response = await anthropic().messages.create({
@@ -71,7 +72,12 @@ export async function verifyMemo(
       messages: [
         {
           role: "user",
-          content: `<fmp_dataset>\n${JSON.stringify(data)}\n</fmp_dataset>\n\n<memo>\n${markdown}\n</memo>`,
+          content:
+            `<fmp_dataset>\n${JSON.stringify(data)}\n</fmp_dataset>\n\n` +
+            (webSources.length > 0
+              ? `<web_sources note="search results the author consulted — you cannot see their contents">\n${webSources.map((s) => `- ${s.title} (${s.url})`).join("\n")}\n</web_sources>\n\n`
+              : "") +
+            `<memo>\n${markdown}\n</memo>`,
         },
       ],
     });
