@@ -5,6 +5,7 @@ import type { MemoSource, MemoMeta } from "../memo";
 import type { KeyStat } from "../stats";
 import type { StreetItem } from "../street";
 import type { PrimarySource } from "../enrich-sources";
+import type { CompsRow } from "../comps";
 
 const MONO = "Menlo, Consolas, 'Courier New', monospace";
 
@@ -29,6 +30,7 @@ export interface MemoEmailArgs {
   meta?: MemoMeta | null;
   primarySources?: PrimarySource[];
   chartUrl?: string | null;
+  comps?: CompsRow[];
   sources?: MemoSource[];
   pdfUrl?: string | null;
 }
@@ -124,6 +126,35 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
           )
           .join(" &nbsp;·&nbsp; ")}
       </p>`,
+    );
+  }
+
+  // Comps: the company against its peer set — small, dense, honest.
+  if (args.comps && args.comps.length > 0) {
+    headerParts.push(
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:2px 0 10px;">
+        <tr>
+          ${["", "P/E", "EV/EBITDA", "P/B", "P/S"]
+            .map(
+              (h, i) =>
+                `<td style="padding:3px 0;border-bottom:1px solid ${BRAND.rule};font-family:${MONO};font-size:8.5px;letter-spacing:1.2px;color:${BRAND.slate};${i > 0 ? "text-align:right;" : ""}">${h || "VS PEERS"}</td>`,
+            )
+            .join("")}
+        </tr>
+        ${args.comps
+          .map(
+            (r) => `<tr>
+            <td style="padding:4px 0;font-family:${MONO};font-size:11px;${r.self ? `font-weight:700;color:${BRAND.ink};` : `color:${BRAND.slate};`}">${escapeHtml(r.label)}</td>
+            ${[r.pe, r.evEbitda, r.pb, r.ps]
+              .map(
+                (v) =>
+                  `<td style="padding:4px 0;text-align:right;font-family:${MONO};font-size:11px;${r.self ? `font-weight:700;color:${BRAND.ink};` : `color:${BRAND.slate};`}">${escapeHtml(v)}</td>`,
+              )
+              .join("")}
+          </tr>`,
+          )
+          .join("")}
+      </table>`,
     );
   }
 

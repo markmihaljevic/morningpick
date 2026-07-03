@@ -301,30 +301,93 @@ export async function fetchUpcomingEarnings(
   return out;
 }
 
+export interface PeerComp {
+  symbol: string;
+  name: string;
+  mktCap: number | null;
+  pe: number | null;
+  pb: number | null;
+  evEbitda: number | null;
+  ps: number | null;
+}
+
+/**
+ * Valuation comps for the peer set — the context that makes "cheap at 1.6x"
+ * falsifiable. One stock-peers call + one ratios call per peer, all cached
+ * per day. Soft-fails to an empty list.
+ */
+export async function fetchPeerComps(ticker: string, maxPeers = 4): Promise<PeerComp[]> {
+  try {
+    const peers = await fmpGet<{ symbol?: string; companyName?: string; mktCap?: number }[]>(
+      "stock-peers",
+      { symbol: ticker },
+    );
+    const top = (peers ?? [])
+      .filter((p) => p.symbol && p.symbol.toUpperCase() !== ticker.toUpperCase())
+      .slice(0, maxPeers);
+    const comps = await Promise.all(
+      top.map(async (p) => {
+        const base: PeerComp = {
+          symbol: p.symbol!,
+          name: (p.companyName ?? p.symbol!).slice(0, 40),
+          mktCap: typeof p.mktCap === "number" ? p.mktCap : null,
+          pe: null,
+          pb: null,
+          evEbitda: null,
+          ps: null,
+        };
+        try {
+          const ratios = await fmpGet<Record<string, unknown>[]>("ratios", {
+            symbol: p.symbol!,
+            limit: 1,
+          });
+          const r = ratios?.[0] ?? {};
+          const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+          base.pe = num(r.priceToEarningsRatio);
+          base.pb = num(r.priceToBookRatio);
+          base.evEbitda = num(r.enterpriseValueMultiple);
+          base.ps = num(r.priceToSalesRatio);
+        } catch {
+          /* peer stays with price/mcap only */
+        }
+        return base;
+      }),
+    );
+    return comps;
+  } catch (e) {
+    console.error(`Peer comps failed for ${ticker} (non-fatal):`, e);
+    return [];
+  }
+}
+
 export interface TickerData {
   profile: unknown;
   quote: unknown;
   keyMetrics: unknown;
-  ratios: unknown;
+  ratios: unknown; // 10 fiscal years, newest first — the company's own multiple history
   incomeStatement: unknown;
   insiderTrades: InsiderTrade[];
   street: StreetData;
   latestTranscript: TranscriptExcerpt | null;
+  peers: PeerComp[];
 }
 
 /** Fetch the grounding dataset for one ticker (~12 FMP requests, cached per day). */
 export async function fetchTickerData(ticker: string): Promise<TickerData> {
   const symbol = { symbol: ticker };
-  const [profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street, latestTranscript] =
+  const [profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street, latestTranscript, peers] =
     await Promise.all([
       fmpGet("profile", symbol),
       fmpGet("quote", symbol),
       fmpGet("key-metrics", { ...symbol, limit: 1 }),
-      fmpGet("ratios", { ...symbol, limit: 1 }),
+      // 10 years, not 1: the company's own multiple/margin history is the
+      // cheapest possible "is this actually cheap FOR THIS COMPANY" evidence.
+      fmpGet("ratios", { ...symbol, limit: 10 }),
       fmpGet("income-statement", { ...symbol, limit: 2 }),
       fetchInsiderTrades(ticker),
       fetchStreetData(ticker),
       fetchLatestTranscript(ticker),
+      fetchPeerComps(ticker),
     ]);
-  return { profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street, latestTranscript };
+  return { profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street, latestTranscript, peers };
 }

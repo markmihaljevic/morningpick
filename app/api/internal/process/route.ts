@@ -12,6 +12,7 @@ import { buildFiveYearChartUrl } from "@/lib/chart";
 import { buildResearchLinks } from "@/lib/research-links";
 import { extractPitchPrice } from "@/lib/performance";
 import { buildKeyStats } from "@/lib/stats";
+import { buildCompsRows } from "@/lib/comps";
 import { buildStreetItems } from "@/lib/street";
 import { discoverPrimarySources } from "@/lib/enrich-sources";
 import { isDailyPlan } from "@/lib/billing";
@@ -313,6 +314,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     title = memo.title;
     const stats = memoKind === "review" ? [] : buildKeyStats(data);
     const street = memoKind === "review" ? [] : buildStreetItems(data);
+    const comps = memoKind === "review" ? [] : buildCompsRows(ticker, data);
     const pitch = extractPitchPrice(data);
     const dateLine = new Date(delivery.delivery_date + "T00:00:00Z").toLocaleDateString("en-GB", {
       day: "numeric",
@@ -340,6 +342,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       meta: memo.meta,
       primarySources,
       chartUrl,
+      comps,
       sources: memo.sources,
       pdfUrl: `${config().APP_URL}/api/memo/${memoId}/pdf`,
     });
@@ -357,7 +360,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       kind: memoKind,
       pitch_price: pitch.price,
       pitch_currency: pitch.currency,
-      extras: { chartUrl, researchLinks, sources: memo.sources, stats, street, meta: memo.meta, primarySources, dateLine },
+      extras: { chartUrl, researchLinks, sources: memo.sources, stats, street, comps, meta: memo.meta, primarySources, dateLine },
     });
     if (memoError) throw new Error(`Memo insert failed: ${memoError.message}`);
   }

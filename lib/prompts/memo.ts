@@ -31,7 +31,9 @@ What the company actually does and where its economics come from. Assume an inte
 Exactly three numbered points. Each one falsifiable, each anchored to a number from the dataset.
 
 ## Valuation
-Work the multiples from the dataset against history, peers, or the company's own cash generation. State what the market is implying at this price — then say whether that implication is stupid, fair, or optimistic.
+Work the multiples three ways, all from the dataset: (1) against the PEER SET (the peers array) — name the names and their multiples; (2) against the company's OWN history (the ratios array is up to 10 fiscal years, newest first) — cheap for this company, or always this cheap?; (3) against its own cash generation. State what the market is implying at this price. Then FINISH WITH THE MATH — three one-line scenarios with explicit arithmetic from dataset numbers:
+**Bear** {multiple/assumption} → {value} ({downside %}) · **Base** … · **Bull** …
+Round numbers, no false precision, name the load-bearing assumption in each line.
 
 ## The Street
 React to the analyst data in the dataset (consensus rating, price targets, forward estimates, beat/miss record). Agree or push back — but say WHY. If coverage is thin or absent, say what that means (orphaned stock, opportunity or warning). Skip this section only if the dataset has no street data at all.

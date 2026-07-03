@@ -22,6 +22,7 @@ import { renderMemoEmail } from "../lib/emails/memo-email";
 import { buildFiveYearChartUrl } from "../lib/chart";
 import { buildResearchLinks } from "../lib/research-links";
 import { buildKeyStats } from "../lib/stats";
+import { buildCompsRows } from "../lib/comps";
 import { buildStreetItems } from "../lib/street";
 import { discoverPrimarySources } from "../lib/enrich-sources";
 import { sendEmail, replyAddress } from "../lib/resend";
@@ -212,6 +213,7 @@ async function main() {
     dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
     stats: memoKind === "review" ? [] : buildKeyStats(data),
     street: memoKind === "review" ? [] : buildStreetItems(data),
+    comps: memoKind === "review" ? [] : buildCompsRows(ticker, data),
     meta: memoKind === "review" ? null : memo.meta,
     primarySources,
     chartUrl,
