@@ -13,6 +13,7 @@ import { buildFiveYearChartUrl } from "@/lib/chart";
 import { buildResearchLinks } from "@/lib/research-links";
 import { extractPitchPrice } from "@/lib/performance";
 import { buildKeyStats } from "@/lib/stats";
+import { buildStreetItems } from "@/lib/street";
 import { sendEmail, replyAddress } from "@/lib/resend";
 
 export const runtime = "nodejs";
@@ -203,6 +204,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     const chartUrl = await buildFiveYearChartUrl(ticker, companyProfile?.currency);
     const researchLinks = buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
     const stats = buildKeyStats(data);
+    const street = buildStreetItems(data);
     const pitch = extractPitchPrice(data);
     const dateLine = new Date(delivery.delivery_date + "T00:00:00Z").toLocaleDateString("en-GB", {
       day: "numeric",
@@ -218,6 +220,8 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       preparedFor: subscriber.email,
       dateLine,
       stats,
+      street,
+      meta: memo.meta,
       chartUrl,
       researchLinks,
       sources: memo.sources,
@@ -236,7 +240,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       reply_address: replyAddress(memoId),
       pitch_price: pitch.price,
       pitch_currency: pitch.currency,
-      extras: { chartUrl, researchLinks, sources: memo.sources, stats, dateLine },
+      extras: { chartUrl, researchLinks, sources: memo.sources, stats, street, meta: memo.meta, dateLine },
     });
     if (memoError) throw new Error(`Memo insert failed: ${memoError.message}`);
   }

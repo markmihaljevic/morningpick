@@ -4,7 +4,8 @@ import { marked, type Token, type Tokens } from "marked";
 import { BRAND } from "../brand";
 import type { KeyStat } from "../stats";
 import type { ResearchLink } from "../research-links";
-import type { MemoSource } from "../memo";
+import type { MemoSource, MemoMeta } from "../memo";
+import type { StreetItem } from "../street";
 
 const styles = StyleSheet.create({
   page: {
@@ -89,6 +90,8 @@ export interface MemoPdfArgs {
   dateLine?: string;
   preparedFor?: string;
   stats?: KeyStat[];
+  street?: StreetItem[];
+  meta?: MemoMeta | null;
   chartUrl?: string | null;
   researchLinks?: ResearchLink[];
   sources?: MemoSource[];
@@ -134,10 +137,29 @@ function blocks(markdown: string): React.ReactNode[] {
     switch (token.type) {
       case "heading":
         if (token.depth === 1) return; // H1 rendered separately as the title
+        // Section headings: mono-gold label over a hairline rule.
         out.push(
-          <Text key={i} style={[styles.para, styles.bold, { fontSize: 12, marginTop: 6 }]}>
-            {inline(token.tokens, `h-${i}`)}
-          </Text>,
+          <View
+            key={i}
+            style={{
+              marginTop: 12,
+              marginBottom: 6,
+              borderTopWidth: 0.75,
+              borderTopColor: BRAND.rule,
+              paddingTop: 8,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: "Helvetica-Bold",
+                fontSize: 7.5,
+                letterSpacing: 2,
+                color: BRAND.gold,
+              }}
+            >
+              {token.text.toUpperCase()}
+            </Text>
+          </View>,
         );
         return;
       case "paragraph":
@@ -199,6 +221,47 @@ export function MemoPdf(args: MemoPdfArgs) {
 
         <Text style={styles.title}>{title}</Text>
 
+        {args.meta && (
+          <View style={{ flexDirection: "row", marginBottom: 8, gap: 6 }}>
+            {[
+              ["CONVICTION", `${args.meta.conviction}/10`],
+              ["HORIZON", args.meta.horizon.toUpperCase()],
+              ...args.meta.style_tags.map((t) => ["STYLE", t.toUpperCase()] as [string, string]),
+            ].map(([label, value], i) => (
+              <View
+                key={i}
+                style={{
+                  borderWidth: 0.75,
+                  borderColor: i === 0 ? BRAND.gold : BRAND.rule,
+                  backgroundColor: i === 0 ? "#FAF3E3" : "#FFFFFF",
+                  paddingVertical: 3,
+                  paddingHorizontal: 7,
+                }}
+              >
+                <Text style={{ fontFamily: "Helvetica", fontSize: 5, letterSpacing: 1, color: BRAND.slate }}>
+                  {label}
+                </Text>
+                <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 8, marginTop: 1 }}>{value}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {args.meta?.one_liner && (
+          <View
+            style={{
+              borderLeftWidth: 2,
+              borderLeftColor: BRAND.gold,
+              backgroundColor: "#FAF3E3",
+              paddingVertical: 6,
+              paddingHorizontal: 9,
+              marginBottom: 10,
+            }}
+          >
+            <Text style={{ fontFamily: "Times-Italic", fontSize: 11 }}>{args.meta.one_liner}</Text>
+          </View>
+        )}
+
         {args.stats && args.stats.length > 0 && (
           <View style={{ marginBottom: 12 }}>
             <View style={styles.statsRow}>
@@ -220,6 +283,20 @@ export function MemoPdf(args: MemoPdfArgs) {
               </View>
             )}
           </View>
+        )}
+
+        {args.street && args.street.length > 0 && (
+          <Text
+            style={{
+              fontFamily: "Helvetica",
+              fontSize: 6.5,
+              letterSpacing: 0.5,
+              color: BRAND.slate,
+              marginBottom: 12,
+            }}
+          >
+            {args.street.map((s) => `${s.label.toUpperCase()} ${s.value}`).join("   ·   ")}
+          </Text>
         )}
 
         {blocks(args.markdown)}

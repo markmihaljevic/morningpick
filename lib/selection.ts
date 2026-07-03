@@ -81,6 +81,7 @@ export async function shortlistCandidates(
   const response = await anthropic().messages.create({
     model: config().FEEDBACK_MODEL,
     max_tokens: 6000,
+    thinking: { type: "disabled" },
     output_config: {
       format: { type: "json_schema", schema: SHORTLIST_SCHEMA },
       effort: "low",
@@ -148,6 +149,7 @@ export async function finalSelect(
   const response = await anthropic().messages.create({
     model: config().FEEDBACK_MODEL,
     max_tokens: 6000,
+    thinking: { type: "disabled" },
     output_config: {
       format: { type: "json_schema", schema: FINAL_SCHEMA },
       effort: "medium",

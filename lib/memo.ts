@@ -55,6 +55,7 @@ export async function generateMemo(args: {
     // Generous: adaptive thinking (on by default for claude-sonnet-5) counts
     // against max_tokens, and a hard-thinking run can exceed 8k total.
     max_tokens: 16000,
+    output_config: { effort: "high" as const },
     system: [
       {
         type: "text" as const,
@@ -63,7 +64,7 @@ export async function generateMemo(args: {
       },
     ],
     tools: [
-      { type: "web_search_20260209" as const, name: "web_search" as const, max_uses: 3 },
+      { type: "web_search_20260209" as const, name: "web_search" as const, max_uses: 4 },
     ],
   };
 
@@ -165,6 +166,68 @@ export async function generateMemo(args: {
   };
 }
 
+export interface MemoMeta {
+  one_liner: string;
+  conviction: number; // 1–10
+  horizon: string; // e.g. "6–18 months"
+  style_tags: string[]; // ≤3 short tags, e.g. ["Merger arb", "Net cash"]
+}
+
+const META_SCHEMA = {
+  type: "object",
+  properties: {
+    one_liner: {
+      type: "string",
+      description: "The whole idea in one punchy sentence, max 140 characters, no ticker prefix",
+    },
+    conviction: {
+      type: "integer",
+      description:
+        "1-10: how strong this setup is on the evidence in the memo (risk-adjusted, honest — most ideas are 5-7)",
+    },
+    horizon: { type: "string", description: 'Expected timeframe, e.g. "6-18 months"' },
+    style_tags: {
+      type: "array",
+      items: { type: "string" },
+      description: "Up to 3 two-word style tags, e.g. 'Deep value', 'Merger arb', 'Quality compounder'",
+    },
+  },
+  required: ["one_liner", "conviction", "horizon", "style_tags"],
+  additionalProperties: false,
+} as const;
+
+/** Distill the verdict block (one-liner, conviction, horizon, tags) from a finished memo. */
+export async function extractMemoMeta(markdown: string): Promise<MemoMeta | null> {
+  try {
+    const response = await anthropic().messages.create({
+      model: config().FEEDBACK_MODEL,
+      max_tokens: 4000,
+      thinking: { type: "disabled" },
+      output_config: {
+        format: { type: "json_schema", schema: META_SCHEMA },
+        effort: "low",
+      },
+      system:
+        "You distill a finished investment memo into its verdict block. Be honest — conviction " +
+        "reflects the memo's own risk discussion, not salesmanship. The one-liner should make a " +
+        "busy reader stop scrolling.",
+      messages: [{ role: "user", content: `<memo>\n${markdown}\n</memo>` }],
+    });
+    if (response.stop_reason === "refusal") return null;
+    const text = response.content.find((b) => b.type === "text");
+    const parsed = JSON.parse(text && "text" in text ? text.text : "{}") as MemoMeta;
+    return {
+      one_liner: (parsed.one_liner ?? "").replace(/<[^>]*>/g, "").slice(0, 160),
+      conviction: Math.min(10, Math.max(1, Math.round(parsed.conviction ?? 5))),
+      horizon: (parsed.horizon ?? "").slice(0, 30),
+      style_tags: (parsed.style_tags ?? []).slice(0, 3).map((t) => String(t).slice(0, 24)),
+    };
+  } catch (e) {
+    console.error("Memo meta extraction failed (non-fatal):", e);
+    return null;
+  }
+}
+
 /**
  * Generate a memo and fact-check its figures against the dataset. One
  * critical-issue regeneration attempt (with the auditor's findings fed back);
@@ -177,7 +240,7 @@ export async function generateVerifiedMemo(args: {
   companyName?: string;
   data: TickerData;
   selectionRationale: string;
-}): Promise<GeneratedMemo & { verification: VerificationResult }> {
+}): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   let memo = await generateMemo(args);
   let verification = await verifyMemo(memo.markdown, args.data);
   if (!verification.passed) {
@@ -203,5 +266,6 @@ export async function generateVerifiedMemo(args: {
       );
     }
   }
-  return { ...memo, verification };
+  const meta = await extractMemoMeta(memo.markdown);
+  return { ...memo, verification, meta };
 }

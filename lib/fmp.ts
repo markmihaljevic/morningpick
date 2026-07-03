@@ -114,6 +114,50 @@ export async function fetchInsiderTrades(ticker: string): Promise<InsiderTrade[]
   }
 }
 
+export interface StreetData {
+  priceTargets: unknown; // consensus/high/low/median analyst price targets
+  ratings: unknown; // buy/hold/sell counts + consensus label
+  earnings: unknown; // recent quarters (actual vs estimated EPS) + next scheduled report
+  estimates: unknown; // forward revenue/EBITDA/EPS consensus, nearest fiscal years
+}
+
+/** What the sell side thinks — coverage varies outside the US; all fail-soft. */
+export async function fetchStreetData(ticker: string): Promise<StreetData> {
+  const soft = async (endpoint: string, params: Record<string, string | number>) => {
+    try {
+      return await fmpGet(endpoint, params);
+    } catch {
+      return null;
+    }
+  };
+  const [priceTargets, ratings, earnings, estimatesRaw] = await Promise.all([
+    soft("price-target-consensus", { symbol: ticker }),
+    soft("grades-consensus", { symbol: ticker }),
+    soft("earnings", { symbol: ticker, limit: 8 }),
+    soft("analyst-estimates", { symbol: ticker, period: "annual", limit: 10 }),
+  ]);
+  // Estimates come future-first out to 2030 — keep the nearest three fiscal years.
+  const estimates = Array.isArray(estimatesRaw)
+    ? (estimatesRaw as { date?: string }[])
+        .filter((e) => e.date)
+        .sort((a, b) => (a.date! < b.date! ? -1 : 1))
+        .filter((e) => e.date! >= new Date().toISOString().slice(0, 10))
+        .slice(0, 3)
+        .map((e) => {
+          const r = e as Record<string, unknown>;
+          return {
+            fiscalYearEnd: r.date,
+            revenueAvg: r.revenueAvg,
+            ebitdaAvg: r.ebitdaAvg,
+            netIncomeAvg: r.netIncomeAvg,
+            epsAvg: r.epsAvg,
+            numAnalystsEps: r.numAnalystsEps ?? r.numberAnalystsEstimatedEps,
+          };
+        })
+    : null;
+  return { priceTargets, ratings, earnings, estimates };
+}
+
 export interface TickerData {
   profile: unknown;
   quote: unknown;
@@ -121,18 +165,21 @@ export interface TickerData {
   ratios: unknown;
   incomeStatement: unknown;
   insiderTrades: InsiderTrade[];
+  street: StreetData;
 }
 
-/** Fetch the grounding dataset for one ticker (~6 FMP requests, cached per day). */
+/** Fetch the grounding dataset for one ticker (~10 FMP requests, cached per day). */
 export async function fetchTickerData(ticker: string): Promise<TickerData> {
   const symbol = { symbol: ticker };
-  const [profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades] = await Promise.all([
-    fmpGet("profile", symbol),
-    fmpGet("quote", symbol),
-    fmpGet("key-metrics", { ...symbol, limit: 1 }),
-    fmpGet("ratios", { ...symbol, limit: 1 }),
-    fmpGet("income-statement", { ...symbol, limit: 2 }),
-    fetchInsiderTrades(ticker),
-  ]);
-  return { profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades };
+  const [profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street] =
+    await Promise.all([
+      fmpGet("profile", symbol),
+      fmpGet("quote", symbol),
+      fmpGet("key-metrics", { ...symbol, limit: 1 }),
+      fmpGet("ratios", { ...symbol, limit: 1 }),
+      fmpGet("income-statement", { ...symbol, limit: 2 }),
+      fetchInsiderTrades(ticker),
+      fetchStreetData(ticker),
+    ]);
+  return { profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street };
 }

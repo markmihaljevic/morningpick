@@ -5,8 +5,9 @@ import { db } from "@/lib/db";
 import { config } from "@/lib/config";
 import { MemoPdf } from "@/lib/pdf/memo-pdf";
 import type { KeyStat } from "@/lib/stats";
+import type { StreetItem } from "@/lib/street";
 import type { ResearchLink } from "@/lib/research-links";
-import type { MemoSource } from "@/lib/memo";
+import type { MemoSource, MemoMeta } from "@/lib/memo";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -39,6 +40,8 @@ export async function GET(
     researchLinks?: ResearchLink[];
     sources?: MemoSource[];
     stats?: KeyStat[];
+    street?: StreetItem[];
+    meta?: MemoMeta | null;
     dateLine?: string;
   };
 
@@ -50,6 +53,8 @@ export async function GET(
       dateLine: extras.dateLine ?? memo.delivery_date,
       preparedFor: (subscriber as { email?: string })?.email,
       stats: extras.stats,
+      street: extras.street,
+      meta: extras.meta,
       chartUrl: extras.chartUrl,
       researchLinks: extras.researchLinks,
       sources: extras.sources,

@@ -19,6 +19,7 @@ import { renderMemoEmail } from "../lib/emails/memo-email";
 import { buildFiveYearChartUrl } from "../lib/chart";
 import { buildResearchLinks } from "../lib/research-links";
 import { buildKeyStats } from "../lib/stats";
+import { buildStreetItems } from "../lib/street";
 import { sendEmail, replyAddress } from "../lib/resend";
 
 async function main() {
@@ -100,6 +101,8 @@ async function main() {
     preparedFor: subscriber.email,
     dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
     stats: buildKeyStats(data),
+    street: buildStreetItems(data),
+    meta: memo.meta,
     chartUrl,
     researchLinks: buildResearchLinks(selection.ticker, companyName ?? selection.ticker, companyProfile),
     sources: memo.sources,

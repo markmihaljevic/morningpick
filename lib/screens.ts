@@ -146,6 +146,7 @@ export async function deriveScreens(profile: Profile): Promise<ScreenParams[]> {
   const response = await anthropic().messages.create({
     model: config().FEEDBACK_MODEL,
     max_tokens: 6000,
+    thinking: { type: "disabled" },
     output_config: {
       format: { type: "json_schema", schema: SCREEN_DERIVATION_SCHEMA },
       effort: "high",

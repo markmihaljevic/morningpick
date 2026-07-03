@@ -61,7 +61,7 @@ export async function verifyMemo(
   try {
     const response = await anthropic().messages.create({
       model: config().FEEDBACK_MODEL,
-      max_tokens: 8000,
+      max_tokens: 12000,
       output_config: {
         format: { type: "json_schema", schema: VERIFY_SCHEMA },
         effort: "medium",
