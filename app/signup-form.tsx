@@ -4,7 +4,7 @@ import { useState } from "react";
 
 export function SignupForm() {
   const [email, setEmail] = useState("");
-  const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [state, setState] = useState<"idle" | "loading" | "done" | "already" | "error">("idle");
   const [message, setMessage] = useState("");
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -19,7 +19,7 @@ export function SignupForm() {
       });
       const body = await res.json();
       setMessage(body.message ?? "Check your email to confirm.");
-      setState(res.ok ? "done" : "error");
+      setState(res.ok ? (body.already ? "already" : "done") : "error");
     } catch {
       setMessage("Something went wrong. Please try again.");
       setState("error");
@@ -30,6 +30,17 @@ export function SignupForm() {
     return (
       <p className="inline-block border border-[#B08C3D] px-5 py-3.5 font-mono text-[13px] tracking-wide text-[#B08C3D]">
         ✓ {message.toUpperCase()}
+      </p>
+    );
+  }
+
+  if (state === "already") {
+    return (
+      <p className="inline-block border border-[#B08C3D] px-5 py-3.5 font-mono text-[13px] tracking-wide text-[#B08C3D]">
+        YOU'RE ALREADY ON THE LIST —{" "}
+        <a href="/desk" className="underline underline-offset-4">
+          SIGN IN TO OPEN YOUR DESK →
+        </a>
       </p>
     );
   }

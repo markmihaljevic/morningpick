@@ -45,8 +45,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .eq("email", email)
     .maybeSingle();
 
-  // Already active → don't leak that; respond identically.
-  if (existing && existing.status === "active") return OK;
+  // Already active → say so. Sign-in reveals subscription status anyway,
+  // so pretending to send a confirmation is pure confusion, not protection.
+  if (existing && existing.status === "active") {
+    return NextResponse.json({ ok: true, already: true });
+  }
 
   let subscriber = existing;
   if (!subscriber) {
