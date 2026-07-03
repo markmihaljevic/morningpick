@@ -13,7 +13,7 @@ import { db } from "../lib/db";
 import type { Profile } from "../lib/profile";
 import { getSubscriberScreens, buildCandidatePool, type ScreenParams } from "../lib/screens";
 import { shortlistCandidates, enrichShortlist, finalSelect } from "../lib/selection";
-import { fetchTickerData, fetchHeadlines } from "../lib/fmp";
+import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings } from "../lib/fmp";
 import { generateVerifiedMemo } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
 import { buildFiveYearChartUrl } from "../lib/chart";
@@ -72,12 +72,19 @@ async function main() {
   const shortlist = await shortlistCandidates(profile, pool, recent.map((r) => r.ticker), recent);
   console.error(`Shortlist: ${shortlist.map((c) => c.ticker).join(", ")}`);
 
-  const [enriched, headlines] = await Promise.all([
+  const [enriched, headlines, upcomingEarnings] = await Promise.all([
     enrichShortlist(shortlist),
     fetchHeadlines(shortlist.map((c) => c.ticker)),
+    fetchUpcomingEarnings(shortlist.map((c) => c.ticker)),
   ]);
   console.error(`Headlines for ${Object.keys(headlines).length} of ${shortlist.length} tickers`);
-  const selection = await finalSelect(profile, enriched, recent, undefined, headlines);
+  console.error(`Upcoming earnings for ${Object.keys(upcomingEarnings).length} tickers`);
+  const sectorByTicker = new Map(pool.map((c) => [c.ticker.toUpperCase(), c.sector]));
+  const recentWithSectors = recent.map((r) => ({
+    ...r,
+    sector: sectorByTicker.get(r.ticker.toUpperCase()) ?? undefined,
+  }));
+  const selection = await finalSelect(profile, enriched, recentWithSectors, undefined, headlines, upcomingEarnings);
   console.error(`Selected: ${selection.ticker} — ${selection.rationale}`);
 
   const companyName = pool.find((c) => c.ticker === selection.ticker)?.name;

@@ -232,27 +232,71 @@ export interface Headline {
  */
 export async function fetchHeadlines(
   tickers: string[],
-  maxPerTicker = 3,
+  maxPerTicker = 4,
   maxAgeDays = 14,
 ): Promise<Record<string, Headline[]>> {
   const out: Record<string, Headline[]> = {};
   if (tickers.length === 0) return out;
-  try {
-    const rows = await fmpGet<
-      { symbol?: string; publishedDate?: string; title?: string; site?: string }[]
-    >("news/stock", { symbols: tickers.join(","), limit: 80 });
-    const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString().slice(0, 10);
+  const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString().slice(0, 10);
+  const ingest = (
+    rows: { symbol?: string; publishedDate?: string; title?: string; site?: string }[] | null,
+    label?: string,
+  ) => {
     for (const r of rows ?? []) {
       if (!r.symbol || !r.title || !r.publishedDate) continue;
       const date = r.publishedDate.slice(0, 10);
       if (date < cutoff) continue;
       const list = (out[r.symbol] ??= []);
       if (list.length < maxPerTicker) {
-        list.push({ date, title: r.title.slice(0, 140), site: r.site ?? "" });
+        list.push({ date, title: r.title.slice(0, 140), site: label ?? r.site ?? "" });
       }
     }
+  };
+  // Two batched calls: media coverage AND company press releases — European
+  // small caps often have zero press coverage but active RNS/PR flow.
+  const [news, prs] = await Promise.allSettled([
+    fmpGet<{ symbol?: string; publishedDate?: string; title?: string; site?: string }[]>(
+      "news/stock",
+      { symbols: tickers.join(","), limit: 80 },
+    ),
+    fmpGet<{ symbol?: string; publishedDate?: string; title?: string; site?: string }[]>(
+      "news/press-releases",
+      { symbols: tickers.join(","), limit: 80 },
+    ),
+  ]);
+  if (news.status === "fulfilled") ingest(news.value);
+  else console.error("Headline fetch failed (non-fatal):", news.reason);
+  if (prs.status === "fulfilled") ingest(prs.value, "press release");
+  else console.error("Press-release fetch failed (non-fatal):", prs.reason);
+  return out;
+}
+
+/**
+ * Upcoming earnings dates for a set of tickers — ONE calendar call for the
+ * whole market (cached per day, shared across every subscriber), filtered
+ * locally. Names reporting soon carry a built-in "why now".
+ */
+export async function fetchUpcomingEarnings(
+  tickers: string[],
+  daysAhead = 21,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  if (tickers.length === 0) return out;
+  try {
+    const from = new Date().toISOString().slice(0, 10);
+    const to = new Date(Date.now() + daysAhead * 86_400_000).toISOString().slice(0, 10);
+    const rows = await fmpGet<{ symbol?: string; date?: string }[]>("earnings-calendar", {
+      from,
+      to,
+    });
+    const wanted = new Set(tickers.map((t) => t.toUpperCase()));
+    for (const r of rows ?? []) {
+      if (!r.symbol || !r.date) continue;
+      const sym = r.symbol.toUpperCase();
+      if (wanted.has(sym) && !out[sym]) out[sym] = r.date.slice(0, 10);
+    }
   } catch (e) {
-    console.error("Headline fetch failed (non-fatal):", e);
+    console.error("Earnings calendar fetch failed (non-fatal):", e);
   }
   return out;
 }
