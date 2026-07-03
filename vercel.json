@@ -11,10 +11,6 @@
     {
       "path": "/api/cron/report",
       "schedule": "30 6 * * 1-5"
-    },
-    {
-      "path": "/api/cron/mark",
-      "schedule": "30 21 * * 1-5"
     }
   ]
 }

@@ -30,11 +30,6 @@ export default function Home() {
         <div className="mt-10">
           <SignupForm />
         </div>
-        <p className="mt-6 font-sans text-sm">
-          <a href="/track-record" className="text-[#b0532a] underline">
-            See our full track record — every pick, marked to market nightly →
-          </a>
-        </p>
         <div className="mt-16 border-t border-[#ddd8cc] pt-6 font-sans text-xs leading-relaxed text-[#8a8578]">
           <p>
             Not investment advice. Memos are AI-generated, for informational and entertainment

@@ -116,7 +116,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
   const { data: subscriber, error: subError } = await db()
     .from("subscribers")
     .select(
-      "id, email, status, unsubscribe_token, portal_token, preference_profiles(structured, philosophy, version, screens, screens_version)",
+      "id, email, status, unsubscribe_token, preference_profiles(structured, philosophy, version, screens, screens_version)",
     )
     .eq("id", delivery.subscriber_id)
     .single();
@@ -208,7 +208,6 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     html = renderMemoEmail({
       markdown: memo.markdown,
       unsubscribeToken: subscriber.unsubscribe_token,
-      portalToken: subscriber.portal_token,
       chartUrl,
       researchLinks,
       sources: memo.sources,

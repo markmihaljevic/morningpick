@@ -6,7 +6,6 @@ import type { ResearchLink } from "../research-links";
 export interface MemoEmailArgs {
   markdown: string;
   unsubscribeToken: string;
-  portalToken?: string;
   chartUrl?: string | null;
   researchLinks?: ResearchLink[];
   sources?: MemoSource[];
@@ -68,5 +67,5 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     );
   }
 
-  return emailLayout(sections.join("\n"), args.unsubscribeToken, args.portalToken);
+  return emailLayout(sections.join("\n"), args.unsubscribeToken);
 }

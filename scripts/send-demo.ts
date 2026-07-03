@@ -30,7 +30,7 @@ async function main() {
   const { data: subscriber, error } = await db()
     .from("subscribers")
     .select(
-      "id, email, unsubscribe_token, portal_token, preference_profiles(structured, philosophy, version, screens, screens_version)",
+      "id, email, unsubscribe_token, preference_profiles(structured, philosophy, version, screens, screens_version)",
     )
     .eq("email", email)
     .single();
@@ -96,7 +96,6 @@ async function main() {
   const html = renderMemoEmail({
     markdown: memo.markdown,
     unsubscribeToken: subscriber.unsubscribe_token,
-    portalToken: subscriber.portal_token,
     chartUrl,
     researchLinks: buildResearchLinks(selection.ticker, companyName ?? selection.ticker, companyProfile),
     sources: memo.sources,
