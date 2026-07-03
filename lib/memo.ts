@@ -327,30 +327,34 @@ export async function generateVerifiedMemo(args: {
   recentProfileChange?: string;
   referenceLinks?: { label: string; url: string }[];
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
+  const MAX_REGENS = 2; // three generations total before failing closed
   let memo = await generateMemo(args);
   let verification = await verifyMemo(memo.markdown, args.data, memo.sources);
-  if (!verification.passed) {
+  const priorIssues: { claim: string; problem: string }[] = [];
+  for (let regen = 0; !verification.passed && regen < MAX_REGENS; regen++) {
+    priorIssues.push(...verification.critical_issues);
     console.warn(
-      `Verification found ${verification.critical_issues.length} critical issue(s) for ${args.ticker}; regenerating once.`,
+      `Verification found ${verification.critical_issues.length} critical issue(s) for ${args.ticker}; regenerating (${regen + 1}/${MAX_REGENS}).`,
       verification.critical_issues,
     );
     memo = await generateMemo({
       ...args,
       selectionRationale:
-        `${args.selectionRationale}\n\nIMPORTANT — a previous draft of this memo contained factual errors ` +
-        `that you must not repeat:\n${verification.critical_issues
+        `${args.selectionRationale}\n\nIMPORTANT — previous drafts contained factual errors you must not repeat. ` +
+        `For each: fix it with a correct dataset figure, attribute it to a real source you actually consulted (inline link or domain), ` +
+        `or REMOVE the claim entirely — an unattributed specific must never survive:\n${priorIssues
           .map((i) => `- "${i.claim}": ${i.problem}`)
           .join("\n")}`,
     });
     verification = await verifyMemo(memo.markdown, args.data, memo.sources);
-    if (!verification.passed) {
-      throw new Error(
-        `Memo for ${args.ticker} failed fact-verification twice: ${verification.critical_issues
-          .map((i) => i.problem)
-          .join("; ")
-          .slice(0, 500)}`,
-      );
-    }
+  }
+  if (!verification.passed) {
+    throw new Error(
+      `Memo for ${args.ticker} failed fact-verification ${MAX_REGENS + 1} times: ${verification.critical_issues
+        .map((i) => i.problem)
+        .join("; ")
+        .slice(0, 500)}`,
+    );
   }
   const meta = await extractMemoMeta(memo.markdown);
   return { ...memo, verification, meta };

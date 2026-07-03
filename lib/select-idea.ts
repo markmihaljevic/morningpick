@@ -147,7 +147,7 @@ export async function selectIdeaWithPreflight(args: {
     if (!flagged.some((f) => f.ticker.toUpperCase() === selection.ticker.toUpperCase())) {
       flagged.push({
         ticker: selection.ticker,
-        reason: `pre-flight pass at ${preflight.expectedConviction}/10: ${preflight.reason}`,
+        reason: `pre-flight veto at ${preflight.expectedConviction}/10: ${preflight.reason}`,
       });
     }
 

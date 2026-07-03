@@ -96,7 +96,7 @@ async function main() {
     });
     for (const a of idea.attempts) {
       console.error(
-        `  preflight ${a.ticker}: ${a.write ? "WRITE" : "PASS"} (${a.expectedConviction}/10 — ${a.reason})`,
+        `  preflight ${a.ticker}: ${a.write ? "WRITE" : "VETO"} (${a.expectedConviction}/10 — ${a.reason})`,
       );
     }
     if (!idea.ok) {
