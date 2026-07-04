@@ -98,7 +98,7 @@ export async function generateMemo(args: {
 
   // 24k max_tokens trips the SDK's "streaming required over 10 minutes"
   // estimate — an explicit timeout opts out (real calls finish in 2-4 min).
-  const requestOptions = { timeout: 10 * 60 * 1000 };
+  const requestOptions = { timeout: 5 * 60 * 1000 };
   // A connection blip must not burn 8 minutes of funnel work — retry once.
   const createWithRetry = async (
     req: Anthropic.MessageCreateParamsNonStreaming,

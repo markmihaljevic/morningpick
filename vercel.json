@@ -9,8 +9,12 @@
       "schedule": "30 5 * * *"
     },
     {
+      "path": "/api/cron/dispatch",
+      "schedule": "30 7 * * *"
+    },
+    {
       "path": "/api/cron/report",
-      "schedule": "30 6 * * *"
+      "schedule": "30 8 * * *"
     }
   ]
 }

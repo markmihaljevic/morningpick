@@ -107,7 +107,7 @@ export async function answerQuestions(args: {
     },
   ];
 
-  const requestOptions = { timeout: 10 * 60 * 1000 };
+  const requestOptions = { timeout: 5 * 60 * 1000 };
   let response = await anthropic().messages.create({ ...baseRequest, messages }, requestOptions);
   let continuations = 0;
   while (response.stop_reason === "pause_turn" && continuations < MAX_CONTINUATIONS) {
