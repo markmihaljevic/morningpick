@@ -320,6 +320,11 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
       ...primarySources.map((s) => ({ label: s.title, url: s.url })),
     ];
 
+    // Final queue attempt: ship good over perfect — fewer tool rounds, no
+    // editorial pass, one repair round. Slow-API days must not eat all three
+    // attempts chasing a ceiling that depth can't fit under.
+    const lightMode = (delivery.attempts ?? 0) >= 3;
+    if (lightMode) console.warn(`Final attempt for ${delivery.id} — light mode.`);
     const [memo, chartUrl] = await Promise.all([
       generateVerifiedMemo({
         profile,
@@ -333,6 +338,7 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
         review: reviewContext,
         recentProfileChange,
         referenceLinks,
+        light: lightMode,
       }),
       memoKind === "review"
         ? Promise.resolve(null)

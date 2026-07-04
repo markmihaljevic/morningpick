@@ -53,6 +53,8 @@ export async function generateMemo(args: {
   review?: ReviewContext;
   recentProfileChange?: string;
   referenceLinks?: { label: string; url: string }[];
+  /** Final-attempt degradation: fewer tool rounds, no editorial — ship good over perfect. */
+  light?: boolean;
 }): Promise<GeneratedMemo> {
   const cfg = config();
   const userPrompt = buildMemoUserPrompt({
@@ -85,13 +87,17 @@ export async function generateMemo(args: {
       },
     ],
     tools: [
-      { type: "web_search_20260209" as const, name: "web_search" as const, max_uses: 4 },
+      {
+        type: "web_search_20260209" as const,
+        name: "web_search" as const,
+        max_uses: args.light ? 2 : 4,
+      },
       {
         type: "web_fetch_20260209" as const,
         name: "web_fetch" as const,
-        max_uses: 4,
+        max_uses: args.light ? 2 : 4,
         // Approximate cap on fetched page text entering the context — cost guard.
-        max_content_tokens: 30000,
+        max_content_tokens: args.light ? 15000 : 30000,
       },
     ],
   };
@@ -201,7 +207,9 @@ export async function generateMemo(args: {
   // Editorial desk: critique the writing, revise once if it materially helps.
   // Facts/links are contractually untouched; the verify pass still runs on
   // whatever comes out.
-  const editorial = await editMemo(cleaned);
+  const editorial = args.light
+    ? { markdown: cleaned, revised: false, issues: [] }
+    : await editMemo(cleaned);
   if (editorial.revised) {
     console.log(`Editorial revision applied for ${args.ticker}: ${editorial.issues.join(" | ")}`);
   }
@@ -340,8 +348,9 @@ export async function generateVerifiedMemo(args: {
   review?: ReviewContext;
   recentProfileChange?: string;
   referenceLinks?: { label: string; url: string }[];
+  light?: boolean;
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
-  const MAX_REGENS = 2; // three generations total before failing closed
+  const MAX_REGENS = args.light ? 1 : 2;
   let memo = await generateMemo(args);
   let verification = await verifyMemo(memo.markdown, args.data, memo.sources);
   const priorIssues: { claim: string; problem: string }[] = [];
