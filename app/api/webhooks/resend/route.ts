@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { Webhook } from "svix";
 import { config } from "@/lib/config";
 import { db, logEvent } from "@/lib/db";
@@ -42,7 +43,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     case "email.complained":
       return handleSuppression(event);
     case "email.received":
-      return handleInbound(event);
+      // Respond IMMEDIATELY, process in after(): Resend hangs up on slow
+      // webhooks (~30s) and Vercel cancels the invocation with it — a
+      // researched answer takes minutes. Caller lifetime must never kill
+      // the research desk mid-answer.
+      after(async () => {
+        try {
+          await handleInbound(event);
+        } catch (e) {
+          console.error("Inbound processing failed:", e);
+        }
+      });
+      return NextResponse.json({ ok: true, accepted: true });
     default:
       return NextResponse.json({ ok: true, ignored: event.type });
   }

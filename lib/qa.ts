@@ -107,12 +107,13 @@ export async function answerQuestions(args: {
     },
   ];
 
-  const requestOptions = { timeout: 5 * 60 * 1000 };
-  let response = await anthropic().messages.create({ ...baseRequest, messages }, requestOptions);
+  // Streamed: research answers run minutes; a silent socket must never
+  // be mistaken for progress (see lib/memo.ts).
+  let response = await anthropic().messages.stream({ ...baseRequest, messages }).finalMessage();
   let continuations = 0;
   while (response.stop_reason === "pause_turn" && continuations < MAX_CONTINUATIONS) {
     messages.push({ role: "assistant", content: response.content });
-    response = await anthropic().messages.create({ ...baseRequest, messages }, requestOptions);
+    response = await anthropic().messages.stream({ ...baseRequest, messages }).finalMessage();
     continuations++;
   }
   if (response.stop_reason === "refusal") {
