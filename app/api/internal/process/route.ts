@@ -16,7 +16,13 @@ import { buildCompsRows } from "@/lib/comps";
 import { buildStreetItems } from "@/lib/street";
 import { discoverPrimarySources } from "@/lib/enrich-sources";
 import { isDailyPlan } from "@/lib/billing";
-import { getCoverageContext, coverageForPrompt, buildBookRows } from "@/lib/coverage";
+import {
+  getCoverageContext,
+  coverageForPrompt,
+  buildBookRows,
+  type CoverageItem,
+  type TasteSignal,
+} from "@/lib/coverage";
 import { decideNote, fallbackNote, type NoteKind } from "@/lib/desk-editor";
 import { selectIdeaWithPreflight, updateWatchlist } from "@/lib/select-idea";
 import { sendEmail, replyAddress } from "@/lib/resend";
@@ -33,6 +39,25 @@ interface DeliveryRow {
   subscriber_id: string;
   delivery_date: string;
   attempts: number;
+  plan?: SavedPlan | null;
+}
+
+/** The desk's checkpointed plan — everything generation needs except the
+ * (per-day-cached, cheap to refetch) ticker dataset. */
+interface SavedPlan {
+  kind: NoteKind;
+  ticker: string;
+  companyName?: string;
+  selectionRationale: string;
+  followupContext?: { originalMarkdown: string; originalDate: string; priceThen: number | null; priceNow: number | null; triggerDetail: string };
+  secondLookContext?: { originalMarkdown: string; originalDate: string; development: string };
+  reviewContext?: { book: unknown[]; headlines: Record<string, { date: string; title: string; site: string }[]>; upcomingEarnings: Record<string, string> };
+  referenceLinks: { label: string; url: string }[];
+  researchLinks: { label: string; url: string }[];
+  primarySources: { url: string; title: string; type: "interview" | "earnings_call" | "deep_dive" | "analysis"; note: string }[];
+  coverage: unknown[];
+  firstNote: boolean;
+  recentProfileChange?: string;
 }
 
 /**
@@ -118,7 +143,172 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   return NextResponse.json({ ok: true, claimed: delivery.id, hop, chain });
 }
 
-async function processDelivery(delivery: DeliveryRow): Promise<void> {
+/**
+ * The desk's morning decision for one delivery: note kind, ticker, contexts,
+ * curated links. Runs ONCE per delivery — checkpointed on the row so retries
+ * resume at generation with a full function budget.
+ */
+async function buildPlan(
+  delivery: DeliveryRow,
+  subscriberId: string,
+  subscriberPlanTier: string,
+  profile: Profile,
+  profileRow: { version?: unknown; screens?: unknown; screens_version?: unknown } | null,
+  coverageItems: CoverageItem[],
+  taste: TasteSignal,
+): Promise<SavedPlan> {
+  const coverage = coverageForPrompt(coverageItems);
+  const firstNote = coverageItems.length === 0;
+
+  // Visible learning: what they told the analyst in the last 48 hours.
+  const { data: recentFeedback } = await db()
+    .from("feedback")
+    .select("interpretation, created_at")
+    .eq("subscriber_id", subscriberId)
+    .gte("created_at", new Date(Date.now() - 48 * 3600 * 1000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(3);
+  const recentProfileChange =
+    (recentFeedback ?? [])
+      .map((f) => f.interpretation as { is_investment_feedback?: boolean; ack_summary?: string } | null)
+      .filter((i) => i?.is_investment_feedback && i?.ack_summary)
+      .map((i) => i!.ack_summary!)
+      .slice(0, 2)
+      .join(" · ") || undefined;
+
+  // The desk editor decides what kind of note this morning deserves.
+  let decision = await decideNote({ coverageItems, dailyPlan: isDailyPlan(subscriberPlanTier) });
+
+  let ticker = "";
+  let companyName: string | undefined;
+  let selectionRationale = decision.reason;
+  let followupContext: SavedPlan["followupContext"];
+  let secondLookContext: SavedPlan["secondLookContext"];
+  let reviewContext: SavedPlan["reviewContext"];
+  let data: TickerData | null = null;
+
+  if (decision.kind === "idea") {
+    const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    const excluded = coverageItems.filter((c) => c.date >= since).map((c) => c.ticker);
+    const idea = await selectIdeaWithPreflight({
+      subscriberId,
+      profile,
+      profileVersion: (profileRow?.version as number) ?? 0,
+      storedScreens: (profileRow?.screens as ScreenParams[]) ?? [],
+      storedScreensVersion: (profileRow?.screens_version as number) ?? -1,
+      excluded,
+      recentTickers: coverageItems.slice(0, 10).map((c) => c.ticker),
+      taste,
+    });
+
+    if (!idea.ok) {
+      // Both candidates failed pre-flight — steward the book instead.
+      const failSummary = idea.attempts
+        .map((a) => `${a.ticker} (${a.expectedConviction}/10: ${a.reason})`)
+        .join("; ");
+      decision = await fallbackNote({
+        coverageItems,
+        reason: `today's candidates failed pre-flight: ${failSummary}`,
+      });
+      await logEvent("preflight_fallback", {
+        subscriberId,
+        payload: { attempts: idea.attempts, fellBackTo: decision.kind },
+      });
+    }
+
+    await updateWatchlist({
+      subscriberId,
+      pickedTicker: decision.kind === "idea" ? idea.ticker : null,
+      flagged: idea.flagged,
+      upcomingEarnings: idea.upcomingEarnings,
+    });
+
+    if (decision.kind === "idea") {
+      ticker = idea.ticker;
+      companyName = idea.companyName;
+      data = idea.data;
+      selectionRationale = idea.ok
+        ? idea.rationale
+        : `${idea.rationale} — NOTE: pre-flight scored this ${idea.preflight.expectedConviction}/10 (${idea.preflight.reason}); write it with honest conviction, do not oversell.`;
+    }
+  }
+
+  if (decision.kind === "followup" && decision.followup) {
+    const trigger = decision.followup;
+    ticker = trigger.ticker;
+    const { data: original } = await db()
+      .from("memos")
+      .select("content_md, company_name")
+      .eq("id", trigger.lastNote.memoId)
+      .single();
+    companyName = original?.company_name ?? undefined;
+    selectionRationale = trigger.detail;
+    followupContext = {
+      originalMarkdown: original?.content_md ?? "(original note unavailable)",
+      originalDate: trigger.lastNote.date,
+      priceThen: trigger.lastNote.pitchPrice,
+      priceNow: trigger.lastNote.priceNow,
+      triggerDetail: trigger.detail,
+    };
+  } else if (decision.kind === "second_look" && decision.ticker && decision.revisit) {
+    ticker = decision.ticker;
+    const { data: original } = await db()
+      .from("memos")
+      .select("content_md, company_name")
+      .eq("id", decision.revisit.memoId)
+      .single();
+    companyName = original?.company_name ?? undefined;
+    selectionRationale = decision.reason;
+    secondLookContext = {
+      originalMarkdown: original?.content_md ?? "(original note unavailable)",
+      originalDate: decision.revisit.date,
+      development: decision.reason,
+    };
+  } else if (decision.kind === "review") {
+    ticker = "REVIEW";
+    selectionRationale = decision.reason;
+    const bookTickers = [...new Set(coverageItems.map((c) => c.ticker))].filter(
+      (t) => t !== "REVIEW",
+    );
+    const [bookHeadlines, bookEarnings] = await Promise.all([
+      fetchHeadlines(bookTickers),
+      fetchUpcomingEarnings(bookTickers, 30),
+    ]);
+    reviewContext = { book: coverage, headlines: bookHeadlines, upcomingEarnings: bookEarnings };
+  }
+
+  if (!ticker) {
+    throw new Error(`Desk decision '${decision.kind}' resolved no ticker — aborting delivery.`);
+  }
+  if (!data && decision.kind !== "review") data = await fetchTickerData(ticker);
+  const primarySources =
+    decision.kind === "review" ? [] : await discoverPrimarySources(ticker, companyName ?? ticker);
+  const companyProfile = (data && (Array.isArray(data.profile) ? data.profile[0] : data.profile)) as
+    | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
+    | undefined;
+  const researchLinks =
+    decision.kind === "review" ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
+
+  return {
+    kind: decision.kind,
+    ticker,
+    companyName,
+    selectionRationale,
+    followupContext,
+    secondLookContext,
+    reviewContext,
+    referenceLinks: [...researchLinks, ...primarySources.map((s) => ({ label: s.title, url: s.url }))],
+    researchLinks,
+    primarySources,
+    coverage,
+    firstNote,
+    recentProfileChange,
+  };
+}
+
+export async function processDelivery(delivery: DeliveryRow): Promise<void> {
   const { data: subscriber, error: subError } = await db()
     .from("subscribers")
     .select(
@@ -165,156 +355,53 @@ async function processDelivery(delivery: DeliveryRow): Promise<void> {
     ticker = existingMemo.ticker;
     title = existingMemo.title ?? `${ticker} — today's idea`;
   } else {
-    // The analyst's memory: recent notes with live returns + subscriber reactions.
+    // The analyst's memory: recent notes with live returns + subscriber
+    // reactions. Needed on every path (book strip); quotes are day-cached.
     const { items: coverageItems, taste } = await getCoverageContext(subscriber.id);
-    const coverage = coverageForPrompt(coverageItems);
-    const firstNote = coverageItems.length === 0;
 
-    // Visible learning: what they told the analyst in the last 48 hours.
-    const { data: recentFeedback } = await db()
-      .from("feedback")
-      .select("interpretation, created_at")
-      .eq("subscriber_id", subscriber.id)
-      .gte("created_at", new Date(Date.now() - 48 * 3600 * 1000).toISOString())
-      .order("created_at", { ascending: false })
-      .limit(3);
-    const recentProfileChange = (recentFeedback ?? [])
-      .map((f) => f.interpretation as { is_investment_feedback?: boolean; ack_summary?: string } | null)
-      .filter((i) => i?.is_investment_feedback && i?.ack_summary)
-      .map((i) => i!.ack_summary!)
-      .slice(0, 2)
-      .join(" · ") || undefined;
-
-    // The desk editor decides what kind of note this morning deserves.
-    let decision = await decideNote({ coverageItems, dailyPlan: isDailyPlan(subscriber.plan) });
-
-    let memoKind: NoteKind = decision.kind;
-    let companyName: string | undefined;
-    let selectionRationale = decision.reason;
-    let followupContext:
-      | { originalMarkdown: string; originalDate: string; priceThen: number | null; priceNow: number | null; triggerDetail: string }
-      | undefined;
-    let secondLookContext:
-      | { originalMarkdown: string; originalDate: string; development: string }
-      | undefined;
-    let reviewContext:
-      | { book: unknown[]; headlines: Record<string, { date: string; title: string; site: string }[]>; upcomingEarnings: Record<string, string> }
-      | undefined;
+    let plan = delivery.plan ?? null;
     let data: TickerData | null = null;
 
-    if (decision.kind === "idea") {
-      const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
-        .toISOString()
-        .slice(0, 10);
-      const excluded = coverageItems.filter((c) => c.date >= since).map((c) => c.ticker);
-      const idea = await selectIdeaWithPreflight({
+    if (plan?.ticker) {
+      // Resume: a previous attempt already decided the morning — go straight
+      // to generation with a full, fresh function budget.
+      console.log(`Resuming checkpointed plan for ${delivery.id}: ${plan.kind} on ${plan.ticker}`);
+    } else {
+      plan = await buildPlan(delivery, subscriber.id, subscriber.plan, profile, profileRow, coverageItems, taste);
+      await db().from("deliveries").update({ plan }).eq("id", delivery.id);
+      await logEvent("plan_checkpointed", {
         subscriberId: subscriber.id,
-        profile,
-        profileVersion: (profileRow?.version as number) ?? 0,
-        storedScreens: (profileRow?.screens as ScreenParams[]) ?? [],
-        storedScreensVersion: (profileRow?.screens_version as number) ?? -1,
-        excluded,
-        recentTickers: coverageItems.slice(0, 10).map((c) => c.ticker),
-        taste,
+        payload: { deliveryId: delivery.id, kind: plan.kind, ticker: plan.ticker },
       });
-
-      if (!idea.ok) {
-        // Both candidates failed pre-flight — steward the book instead.
-        const failSummary = idea.attempts
-          .map((a) => `${a.ticker} (${a.expectedConviction}/10: ${a.reason})`)
-          .join("; ");
-        decision = await fallbackNote({
-          coverageItems,
-          reason: `today's candidates failed pre-flight: ${failSummary}`,
-        });
-        memoKind = decision.kind;
-        await logEvent("preflight_fallback", {
-          subscriberId: subscriber.id,
-          payload: { attempts: idea.attempts, fellBackTo: decision.kind },
-        });
-      }
-
-      await updateWatchlist({
-        subscriberId: subscriber.id,
-        pickedTicker: decision.kind === "idea" ? idea.ticker : null,
-        flagged: idea.flagged,
-        upcomingEarnings: idea.upcomingEarnings,
-      });
-
-      if (decision.kind === "idea") {
-        ticker = idea.ticker;
-        companyName = idea.companyName;
-        data = idea.data;
-        selectionRationale = idea.ok
-          ? idea.rationale
-          : `${idea.rationale} — NOTE: pre-flight scored this ${idea.preflight.expectedConviction}/10 (${idea.preflight.reason}); write it with honest conviction, do not oversell.`;
-      }
     }
 
-    if (decision.kind === "followup" && decision.followup) {
-      const trigger = decision.followup;
-      ticker = trigger.ticker;
-      const { data: original } = await db()
-        .from("memos")
-        .select("content_md, company_name")
-        .eq("id", trigger.lastNote.memoId)
-        .single();
-      companyName = original?.company_name ?? undefined;
-      selectionRationale = trigger.detail;
-      followupContext = {
-        originalMarkdown: original?.content_md ?? "(original note unavailable)",
-        originalDate: trigger.lastNote.date,
-        priceThen: trigger.lastNote.pitchPrice,
-        priceNow: trigger.lastNote.priceNow,
-        triggerDetail: trigger.detail,
-      };
-    } else if (decision.kind === "second_look" && decision.ticker && decision.revisit) {
-      ticker = decision.ticker;
-      const { data: original } = await db()
-        .from("memos")
-        .select("content_md, company_name")
-        .eq("id", decision.revisit.memoId)
-        .single();
-      companyName = original?.company_name ?? undefined;
-      selectionRationale = decision.reason;
-      secondLookContext = {
-        originalMarkdown: original?.content_md ?? "(original note unavailable)",
-        originalDate: decision.revisit.date,
-        development: decision.reason,
-      };
-    } else if (decision.kind === "review") {
-      ticker = "REVIEW";
-      selectionRationale = decision.reason;
-      const bookTickers = [...new Set(coverageItems.map((c) => c.ticker))].filter(
-        (t) => t !== "REVIEW",
-      );
-      const [bookHeadlines, bookEarnings] = await Promise.all([
-        fetchHeadlines(bookTickers),
-        fetchUpcomingEarnings(bookTickers, 30),
-      ]);
-      reviewContext = {
-        book: coverage,
-        headlines: bookHeadlines,
-        upcomingEarnings: bookEarnings,
-      };
-      data = { book: coverage, headlines: bookHeadlines, upcomingEarnings: bookEarnings } as unknown as TickerData;
-    }
+    // Hydrate generation inputs from the plan.
+    ticker = plan.ticker;
+    const memoKind = plan.kind;
+    const companyName = plan.companyName;
+    const selectionRationale = plan.selectionRationale;
+    const followupContext = plan.followupContext;
+    const secondLookContext = plan.secondLookContext;
+    const reviewContext = plan.reviewContext;
+    const referenceLinks = plan.referenceLinks;
+    const researchLinks = plan.researchLinks;
+    const primarySources = plan.primarySources;
+    const coverage = plan.coverage;
+    const firstNote = plan.firstNote;
+    const recentProfileChange = plan.recentProfileChange;
 
-    if (!ticker) {
-      throw new Error(`Desk decision '${decision.kind}' resolved no ticker — aborting delivery.`);
-    }
-    if (!data) data = await fetchTickerData(ticker);
-    const primarySources =
-      memoKind === "review" ? [] : await discoverPrimarySources(ticker, companyName ?? ticker);
+    data =
+      memoKind === "review" && reviewContext
+        ? ({
+            book: reviewContext.book,
+            headlines: reviewContext.headlines,
+            upcomingEarnings: reviewContext.upcomingEarnings,
+          } as unknown as TickerData)
+        : await fetchTickerData(ticker);
     const companyProfile = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
       | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
       | undefined;
-    const researchLinks =
-      memoKind === "review" ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
-    const referenceLinks = [
-      ...researchLinks,
-      ...primarySources.map((s) => ({ label: s.title, url: s.url })),
-    ];
+
 
     // Final queue attempt: ship good over perfect — fewer tool rounds, no
     // editorial pass, one repair round. Slow-API days must not eat all three
