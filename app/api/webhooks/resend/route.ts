@@ -211,6 +211,34 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
     return NextResponse.json({ ok: true, skipped: "duplicate race" });
   }
 
+  // Instant confirmation — within seconds, like an analyst would. One per
+  // 15 minutes per subscriber as a loop guard (auto-replies are already
+  // dropped upstream, but belts and braces).
+  try {
+    const { count: recentAcks } = await db()
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .eq("type", "reply_ack_sent")
+      .eq("subscriber_id", subscriber.id)
+      .gte("created_at", new Date(Date.now() - 15 * 60 * 1000).toISOString());
+    if ((recentAcks ?? 0) === 0) {
+      const { renderReplyReceivedEmail } = await import("@/lib/emails/reply-received-email");
+      const { sendEmail: sendAck } = await import("@/lib/resend");
+      await sendAck({
+        to: subscriber.email,
+        subject: memoId || subjectTitle ? `Re: ${subjectTitle || "your note"}` : "Got your note",
+        html: renderReplyReceivedEmail({
+          unsubscribeToken: subscriber.unsubscribe_token,
+          replySnippet: cleanedBody.slice(0, 280),
+        }),
+        unsubscribeToken: subscriber.unsubscribe_token,
+      });
+      await logEvent("reply_ack_sent", { subscriberId: subscriber.id });
+    }
+  } catch (e) {
+    console.error("Instant reply confirmation failed (continuing):", e);
+  }
+
   const { data: profile } = await db()
     .from("preference_profiles")
     .select("structured, philosophy")
@@ -259,7 +287,7 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
     memoId,
     interpretation,
     unsubscribeToken: subscriber.unsubscribe_token,
-    suppressAck: hasQuestions, // the researched answer doubles as the ack
+    suppressAck: true, // the instant reply confirmation is the ack now
   });
 
   // Route questions to the research desk — answered in the same email thread.
@@ -314,34 +342,7 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
       ackSummary: interpretation.ack_summary,
     });
 
-    // Slow answers feel like diligence only if the desk says it's working:
-    // if research takes >90s, an "on it" note goes out first.
-    const raced = await Promise.race([
-      answerPromise.then((r) => ({ done: true as const, r })),
-      new Promise<{ done: false }>((resolve) =>
-        setTimeout(() => resolve({ done: false }), 90_000),
-      ),
-    ]);
-    if (!raced.done) {
-      try {
-        const { renderOnItEmail } = await import("@/lib/emails/on-it-email");
-        const { sendEmail } = await import("@/lib/resend");
-        await sendEmail({
-          to: subscriber.email,
-          subject: memoRow?.title ? `Re: ${memoRow.title}` : "Your analyst is on it",
-          html: renderOnItEmail({
-            unsubscribeToken: subscriber.unsubscribe_token,
-            firstQuestion: interpretation.questions[0] ?? "",
-          }),
-          unsubscribeToken: subscriber.unsubscribe_token,
-        });
-        await logEvent("qa_ack_sent", { subscriberId: subscriber.id });
-      } catch (e) {
-        console.error("On-it ack failed (answer still coming):", e);
-      }
-    }
-
-    const result = raced.done ? raced.r : await answerPromise;
+    const result = await answerPromise;
     answered = result.sent;
     if (result.sent && result.markdown) {
       await db().from("feedback").update({ answer_md: result.markdown }).eq("id", stub.id);

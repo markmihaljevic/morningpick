@@ -39,9 +39,9 @@ export interface MemoEmailArgs {
 }
 
 function sectionLabel(text: string): string {
-  return `<div style="margin:28px 0 10px;border-top:1px solid ${BRAND.rule};padding-top:14px;">
-    <span style="font-family:${MONO};font-size:11px;letter-spacing:2.5px;color:${BRAND.gold};font-weight:700;">${text}</span>
-  </div>`;
+  // A typed memo's heading: bold serif, sentence case, no chrome.
+  const title = text.charAt(0) + text.slice(1).toLowerCase();
+  return `<h3 style="font-family:${BRAND.serif};font-size:17px;line-height:1.4;margin:26px 0 8px;color:${BRAND.ink};font-weight:700;">${title}</h3>`;
 }
 
 /** The memo email — the Morningpick research note. */
@@ -50,25 +50,22 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
   const styled = html
     .replace(
       /<h1>/g,
-      `<h1 style="font-size:26px;line-height:1.28;margin:4px 0 14px;font-weight:700;color:${BRAND.ink};">`,
+      `<p style="margin:0 0 18px;">Good morning,</p><h1 style="font-family:${BRAND.serif};font-size:20px;line-height:1.4;margin:0 0 14px;font-weight:700;color:${BRAND.ink};">`,
     )
-    .replace(/<h2>([\s\S]*?)<\/h2>/g, (_, inner: string) => sectionLabel(inner.toUpperCase()))
+    .replace(/<h2>([\s\S]*?)<\/h2>/g, (_, inner: string) => sectionLabel(inner))
     .replace(/<h3>/g, `<h3 style="font-size:17px;line-height:1.4;margin:22px 0 6px;color:${BRAND.ink};">`)
     .replace(/<p>/g, '<p style="margin:0 0 15px;">')
     .replace(/<ol>/g, '<ol style="margin:0 0 15px;padding-left:22px;">')
     .replace(/<ul>/g, '<ul style="margin:0 0 15px;padding-left:22px;">')
     .replace(/<li>/g, '<li style="margin:0 0 8px;">')
     .replace(/<strong>/g, `<strong style="color:${BRAND.ink};">`)
-    .replace(/<a href=/g, `<a style="color:${BRAND.gold};font-weight:700;text-decoration:underline;text-decoration-color:${BRAND.rule};" href=`);
+    .replace(/<a href=/g, `<a style="color:${BRAND.ink};text-decoration:underline;text-decoration-color:#C9CFD4;" href=`);
 
   const sections: string[] = [];
 
   if (args.firstNote) {
     sections.push(
-      `<div style="border:1px solid ${BRAND.gold};padding:12px 16px;margin:0 0 20px;">
-        <span style="font-family:${MONO};font-size:10px;letter-spacing:1.5px;color:${BRAND.gold};font-weight:700;">YOUR FIRST NOTE</span>
-        <span style="font-family:${BRAND.sans};font-size:12.5px;color:${BRAND.slate};"> — written before knowing you. Reply and tell your analyst how you invest; every note from here on adapts.</span>
-      </div>`,
+      `<p style="margin:0 0 18px;font-style:italic;color:${BRAND.slate};font-size:14.5px;">A word before we start: this is your first note, written before I know you. Reply and tell me how you invest — everything from here on adapts.</p>`,
     );
   }
 
@@ -78,24 +75,20 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
   // Verdict strip: one dark bar, not a row of boxes.
   if (args.meta) {
     const parts = [
-      `CONVICTION <span style="color:${BRAND.gold};">${args.meta.conviction}/10</span>`,
-      `HORIZON <span style="color:${BRAND.paper};">${escapeHtml(args.meta.horizon.toUpperCase())}</span>`,
+      `CONVICTION <span style="color:${BRAND.ink};font-weight:700;">${args.meta.conviction}/10</span>`,
+      `HORIZON <span style="color:${BRAND.ink};">${escapeHtml(args.meta.horizon.toUpperCase())}</span>`,
       ...args.meta.style_tags.map(
-        (t) => `<span style="color:${BRAND.paper};">${escapeHtml(t.toUpperCase())}</span>`,
+        (t) => `<span style="color:${BRAND.ink};">${escapeHtml(t.toUpperCase())}</span>`,
       ),
     ].map((p) => `<span style="white-space:nowrap;">${p}</span>`);
     headerParts.push(
-      `<div style="background-color:${BRAND.ink};padding:8px 14px;margin:2px 0 14px;">
-        <span style="font-family:${MONO};font-size:10.5px;letter-spacing:1.5px;line-height:2;color:#8FA0B0;">${parts.join('<span style="color:#3D4F60;">&nbsp;&nbsp;|&nbsp;&nbsp;</span>')}</span>
-      </div>`,
+      `<p style="margin:0 0 14px;font-family:${MONO};font-size:10px;letter-spacing:1px;line-height:2;color:${BRAND.slate};">${parts.join('<span style="color:${BRAND.rule};">&nbsp;·&nbsp;</span>')}</p>`,
     );
   }
 
   if (args.meta?.one_liner) {
     headerParts.push(
-      `<div style="border-left:3px solid ${BRAND.gold};padding:2px 0 2px 14px;margin:0 0 18px;">
-        <span style="font-family:${BRAND.serif};font-size:17px;font-style:italic;color:${BRAND.ink};line-height:1.5;">${escapeHtml(args.meta.one_liner)}</span>
-      </div>`,
+      `<p style="margin:0 0 18px;font-family:${BRAND.serif};font-size:16.5px;font-style:italic;color:${BRAND.ink};line-height:1.55;">${escapeHtml(args.meta.one_liner)}</p>`,
     );
   }
 
@@ -183,23 +176,14 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
   // Worth your time: curated primary sources, only when something clears the bar.
   if (args.primarySources && args.primarySources.length > 0) {
     sections.push(
-      `<div style="margin:28px 0 0;">
-        ${sectionLabel("WORTH YOUR TIME")}
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
-          ${args.primarySources
-            .map(
-              (s) => `<tr>
-                <td style="padding:0 0 12px;vertical-align:top;width:110px;">
-                  <span style="display:inline-block;background:${BRAND.ink};color:${BRAND.gold};font-family:${MONO};font-size:8px;letter-spacing:1.2px;padding:3px 7px;">${SOURCE_TYPE_LABEL[s.type]}</span>
-                </td>
-                <td style="padding:0 0 12px;vertical-align:top;">
-                  <a href="${s.url}" style="font-family:${BRAND.serif};font-size:15px;color:${BRAND.ink};font-weight:700;">${escapeHtml(s.title)}</a><br/>
-                  <span style="font-family:${BRAND.sans};font-size:12.5px;color:${BRAND.slate};">${escapeHtml(s.note)}</span>
-                </td>
-              </tr>`,
-            )
-            .join("\n")}
-        </table>
+      `<div style="margin:26px 0 0;">
+        ${sectionLabel("Worth your time")}
+        ${args.primarySources
+          .map(
+            (s) =>
+              `<p style="margin:0 0 10px;font-size:15px;"><a href="${s.url}" style="color:${BRAND.ink};font-weight:700;">${escapeHtml(s.title)}</a> <span style="font-family:${MONO};font-size:9px;letter-spacing:1px;color:${BRAND.slate};">${SOURCE_TYPE_LABEL[s.type]}</span><br/><span style="font-family:${BRAND.sans};font-size:12.5px;color:${BRAND.slate};">${escapeHtml(s.note)}</span></p>`,
+          )
+          .join("\n")}
       </div>`,
     );
   }
@@ -238,16 +222,14 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     );
   }
 
-  if (args.pdfUrl) {
-    sections.push(
-      `<div style="margin:28px 0 0;">
-        <a href="${args.pdfUrl}"
-           style="display:inline-block;background:${BRAND.ink};color:${BRAND.paper};font-family:${MONO};font-size:11px;letter-spacing:2px;padding:11px 22px;text-decoration:none;border-bottom:2px solid ${BRAND.gold};">
-          DOWNLOAD PDF ↧
-        </a>
-      </div>`,
-    );
-  }
+  // The sign-off: a letter ends with a person, not a button.
+  sections.push(
+    `<p style="margin:26px 0 0;">— Your analyst</p>${
+      args.pdfUrl
+        ? `<p style="margin:14px 0 0;font-family:${BRAND.sans};font-size:12.5px;"><a href="${args.pdfUrl}" style="color:${BRAND.slate};">Keep the PDF ↧</a></p>`
+        : ""
+    }`,
+  );
 
   if (args.sources && args.sources.length > 0) {
     sections.push(
