@@ -62,7 +62,7 @@ export async function verifyMemo(
   webSources: { url: string; title: string }[] = [],
 ): Promise<VerificationResult> {
   try {
-    const response = await anthropic().messages.create({
+    const stream = anthropic().messages.stream({
       model: config().FEEDBACK_MODEL,
       max_tokens: 12000,
       output_config: {
@@ -82,6 +82,7 @@ export async function verifyMemo(
         },
       ],
     });
+    const response = await stream.finalMessage();
     if (response.stop_reason === "refusal") {
       return { passed: true, critical_issues: [], minor_issues: [] };
     }

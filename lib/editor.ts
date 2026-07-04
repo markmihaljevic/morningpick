@@ -80,7 +80,7 @@ export async function editMemo(markdown: string): Promise<EditorialResult> {
       return { markdown, revised: false, issues };
     }
 
-    const revision = await anthropic().messages.create({
+    const revisionStream = anthropic().messages.stream({
       model: cfg.MEMO_MODEL,
       max_tokens: 20000,
       output_config: { effort: "medium" },
@@ -94,6 +94,7 @@ export async function editMemo(markdown: string): Promise<EditorialResult> {
         },
       ],
     });
+    const revision = await revisionStream.finalMessage();
     if (revision.stop_reason !== "end_turn") return { markdown, revised: false, issues };
     const revised = revision.content
       .filter((b) => b.type === "text")

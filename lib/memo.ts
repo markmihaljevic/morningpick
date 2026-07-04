@@ -102,19 +102,23 @@ export async function generateMemo(args: {
     ],
   };
 
-  // 24k max_tokens trips the SDK's "streaming required over 10 minutes"
-  // estimate — an explicit timeout opts out (real calls finish in 2-4 min).
-  const requestOptions = { timeout: 5 * 60 * 1000 };
-  // A connection blip must not burn 8 minutes of funnel work — retry once.
+  // STREAMING, not polling a silent socket: long research turns hang
+  // non-streaming requests (and SDK retries multiply every timeout). A
+  // stream delivers events continuously — a stall is visible immediately
+  // instead of after a timeout window. One retry for connection blips.
   const createWithRetry = async (
     req: Anthropic.MessageCreateParamsNonStreaming,
   ): Promise<Anthropic.Message> => {
+    const once = async () => {
+      const stream = anthropic().messages.stream(req);
+      return await stream.finalMessage();
+    };
     try {
-      return await anthropic().messages.create(req, requestOptions);
+      return await once();
     } catch (e) {
       if (e instanceof Anthropic.APIConnectionError) {
         console.warn(`Anthropic connection error for ${args.ticker}; retrying once:`, e.message);
-        return await anthropic().messages.create(req, requestOptions);
+        return await once();
       }
       throw e;
     }
