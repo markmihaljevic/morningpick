@@ -45,6 +45,8 @@ export async function answerQuestions(args: {
   profile: Profile;
   feedbackApplied: boolean;
   ackSummary: string;
+  /** Operator make-goods skip the daily throttle. */
+  bypassThrottle?: boolean;
 }): Promise<AnswerResult> {
   const cfg = config();
 
@@ -56,7 +58,7 @@ export async function answerQuestions(args: {
     .eq("type", "qa_answered")
     .eq("subscriber_id", args.subscriberId)
     .gte("created_at", dayAgo);
-  if ((count ?? 0) >= MAX_ANSWERS_PER_DAY) {
+  if (!args.bypassThrottle && (count ?? 0) >= MAX_ANSWERS_PER_DAY) {
     return { sent: false, reason: "daily answer limit reached" };
   }
 
