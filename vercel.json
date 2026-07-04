@@ -2,15 +2,15 @@
   "crons": [
     {
       "path": "/api/cron/dispatch",
-      "schedule": "30 4 * * 1-5"
+      "schedule": "30 4 * * *"
     },
     {
       "path": "/api/cron/dispatch",
-      "schedule": "30 5 * * 1-5"
+      "schedule": "30 5 * * *"
     },
     {
       "path": "/api/cron/report",
-      "schedule": "30 6 * * 1-5"
+      "schedule": "30 6 * * *"
     }
   ]
 }
