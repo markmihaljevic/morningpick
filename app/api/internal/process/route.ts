@@ -16,6 +16,7 @@ import { buildCompsRows } from "@/lib/comps";
 import { buildStreetItems } from "@/lib/street";
 import { discoverPrimarySources } from "@/lib/enrich-sources";
 import { isDailyPlan } from "@/lib/billing";
+import { getOrBuildBrief } from "@/lib/research";
 import {
   getCoverageContext,
   coverageForPrompt,
@@ -403,6 +404,12 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       | undefined;
 
 
+    // Research once, write per subscriber: acquire the day's shared fact
+    // base for this ticker (built by whichever worker gets here first).
+    // null → legacy self-researched path, so a brief failure never blocks.
+    const researchBrief =
+      memoKind === "review" ? null : await getOrBuildBrief(ticker, companyName, data, delivery.id);
+
     // Final queue attempt: ship good over perfect — fewer tool rounds, no
     // editorial pass, one repair round. Slow-API days must not eat all three
     // attempts chasing a ceiling that depth can't fit under.
@@ -420,6 +427,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
         secondLook: secondLookContext,
         review: reviewContext,
         recentProfileChange,
+        researchBrief: researchBrief ?? undefined,
         referenceLinks,
         light: lightMode,
       }),

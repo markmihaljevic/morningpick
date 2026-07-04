@@ -25,6 +25,7 @@ import { buildKeyStats } from "../lib/stats";
 import { buildCompsRows } from "../lib/comps";
 import { buildStreetItems } from "../lib/street";
 import { discoverPrimarySources } from "../lib/enrich-sources";
+import { getOrBuildBrief } from "../lib/research";
 import { sendEmail, replyAddress } from "../lib/resend";
 
 const REPEAT_EXCLUSION_DAYS = 90; // match the worker
@@ -191,6 +192,9 @@ async function main() {
     `Primary sources: ${primarySources.map((s) => `[${s.type}] ${s.title}`).join(" | ") || "none"}`,
   );
 
+  const researchBrief =
+    memoKind === "review" ? null : await getOrBuildBrief(ticker, companyName, data, "demo");
+  console.error(`Research brief: ${researchBrief ? `ready (${researchBrief.sources.length} sources)` : "unavailable — legacy path"}`);
   console.error(`Generating + fact-checking ${memoKind} note…`);
   const [memo, chartUrl] = await Promise.all([
     generateVerifiedMemo({
@@ -203,6 +207,7 @@ async function main() {
       followup: followupContext,
       secondLook: secondLookContext,
       review: reviewContext,
+      researchBrief: researchBrief ?? undefined,
       referenceLinks,
     }),
     memoKind === "review"

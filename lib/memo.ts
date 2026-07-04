@@ -12,6 +12,7 @@ import {
 } from "./prompts/memo";
 import { verifyMemo, type VerificationResult } from "./verify";
 import { editMemo } from "./editor";
+import type { ResearchBrief } from "./research";
 
 const MAX_CONTINUATIONS = 5;
 
@@ -52,6 +53,8 @@ export async function generateMemo(args: {
   secondLook?: SecondLookContext;
   review?: ReviewContext;
   recentProfileChange?: string;
+  /** Shared fact base: when present the writer runs TOOLLESS — fast and cheap. */
+  researchBrief?: ResearchBrief;
   referenceLinks?: { label: string; url: string }[];
   /** Final-attempt degradation: fewer tool rounds, no editorial — ship good over perfect. */
   light?: boolean;
@@ -69,6 +72,7 @@ export async function generateMemo(args: {
     secondLook: args.secondLook,
     review: args.review,
     recentProfileChange: args.recentProfileChange,
+    researchBrief: args.researchBrief,
     referenceLinks: args.referenceLinks,
   });
 
@@ -86,20 +90,23 @@ export async function generateMemo(args: {
         cache_control: { type: "ephemeral" as const },
       },
     ],
-    tools: [
-      {
-        type: "web_search_20260209" as const,
-        name: "web_search" as const,
-        max_uses: args.light ? 2 : 4,
-      },
-      {
-        type: "web_fetch_20260209" as const,
-        name: "web_fetch" as const,
-        max_uses: args.light ? 2 : 4,
-        // Approximate cap on fetched page text entering the context — cost guard.
-        max_content_tokens: args.light ? 15000 : 30000,
-      },
-    ],
+    // With a research brief the writer is TOOLLESS — the desk already did
+    // the digging once, for everyone. Without one (fallback), tools as before.
+    tools: args.researchBrief
+      ? []
+      : [
+          {
+            type: "web_search_20260209" as const,
+            name: "web_search" as const,
+            max_uses: args.light ? 2 : 4,
+          },
+          {
+            type: "web_fetch_20260209" as const,
+            name: "web_fetch" as const,
+            max_uses: args.light ? 2 : 4,
+            max_content_tokens: args.light ? 15000 : 30000,
+          },
+        ],
   };
 
   // STREAMING, not polling a silent socket: long research turns hang
@@ -226,6 +233,10 @@ export async function generateMemo(args: {
   // the editorial pass so a revision can't smuggle a new URL through.
   const allowedUrls = new Set<string>(searchResults.keys());
   for (const l of args.referenceLinks ?? []) allowedUrls.add(l.url);
+  for (const s of args.researchBrief?.sources ?? []) {
+    allowedUrls.add(s.url);
+    if (!searchResults.has(s.url)) searchResults.set(s.url, s);
+  }
   cleaned = cleaned.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, text: string, url: string) =>
     allowedUrls.has(url) ? match : text,
   );
@@ -351,12 +362,15 @@ export async function generateVerifiedMemo(args: {
   secondLook?: SecondLookContext;
   review?: ReviewContext;
   recentProfileChange?: string;
+  researchBrief?: ResearchBrief;
   referenceLinks?: { label: string; url: string }[];
   light?: boolean;
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   const MAX_REGENS = args.light ? 1 : 2;
   let memo = await generateMemo(args);
-  let verification = await verifyMemo(memo.markdown, args.data, memo.sources);
+  // The attribution check should recognize brief-sourced claims as sourced.
+  const verifySources = args.researchBrief ? args.researchBrief.sources : memo.sources;
+  let verification = await verifyMemo(memo.markdown, args.data, verifySources);
   const priorIssues: { claim: string; problem: string }[] = [];
   for (let regen = 0; !verification.passed && regen < MAX_REGENS; regen++) {
     priorIssues.push(...verification.critical_issues);
@@ -373,7 +387,7 @@ export async function generateVerifiedMemo(args: {
           .map((i) => `- "${i.claim}": ${i.problem}`)
           .join("\n")}`,
     });
-    verification = await verifyMemo(memo.markdown, args.data, memo.sources);
+    verification = await verifyMemo(memo.markdown, args.data, verifySources);
   }
   if (!verification.passed) {
     throw new Error(

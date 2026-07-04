@@ -90,9 +90,19 @@ export function buildMemoUserPrompt(args: {
   review?: ReviewContext;
   /** What the subscriber told the analyst in the last day or two — acknowledged once, visibly. */
   recentProfileChange?: string;
+  /** The desk's shared fact base — when present, the writer has NO tools and writes from this. */
+  researchBrief?: { markdown: string };
   referenceLinks?: { label: string; url: string }[]; // curated links to weave in inline
 }): string {
   const { profile, ticker, companyName, data, today, selectionRationale } = args;
+
+  const briefBlock = args.researchBrief
+    ? `<research_brief note="Prepared by YOUR research desk this morning. Every event claim in it is sourced with an inline link — when you use one of its facts, carry its link inline. You have NO search or fetch tools on this note: write exclusively from this brief, the dataset, and your coverage memory. If a fact is in neither, it does not go in the note.">
+${args.researchBrief.markdown}
+</research_brief>
+
+`
+    : "";
 
   const learningBlock = args.recentProfileChange
     ? `<recent_profile_update note="They told you this recently. Acknowledge it in ONE early clause where it genuinely shaped today's choice — they should SEE the dial moved (e.g. 'You asked for less energy exposure — today, specialty chemicals'). Once, naturally, never gratuitously.">
@@ -196,7 +206,7 @@ ${
           .map((l) => `- ${l.label}: ${l.url}`)
           .join("\n")}\n</reference_links>\n\n`
       : ""
-  }${learningBlock}${coverageBlock}${followupBlock}${secondLookBlock}${reviewBlock}${
+  }${briefBlock}${learningBlock}${coverageBlock}${followupBlock}${secondLookBlock}${reviewBlock}${
     args.review
       ? ""
       : `Chosen ticker: ${ticker}${companyName ? ` (${companyName})` : ""}\n`
@@ -213,5 +223,9 @@ Write today's ${
         : args.followup
           ? `follow-up note on ${ticker}`
           : `note on ${ticker}`
-  }. Use at most 4 web searches (recent news/catalysts only) and at most 4 fetches (reading the primary documents that matter most).`;
+  }.${
+    args.researchBrief
+      ? " Write from the research brief + dataset — no tools this morning; your desk already did the digging."
+      : " Use at most 4 web searches (recent news/catalysts only) and at most 4 fetches (reading the primary documents that matter most)."
+  }`;
 }
