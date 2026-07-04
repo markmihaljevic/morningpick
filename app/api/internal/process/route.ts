@@ -26,7 +26,6 @@ export const maxDuration = 800;
 
 const MAX_HOPS = 300;
 // Don't start a new memo unless at least this much runtime remains.
-const PER_MEMO_RESERVE_MS = 420_000; // fetch-heavy memos run 4-7 min end to end
 const REPEAT_EXCLUSION_DAYS = 90;
 
 interface DeliveryRow {
@@ -54,27 +53,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "hop cap reached" });
   }
 
-  const startedAt = Date.now();
-  let processed = 0;
+  // Claim ONE delivery, respond IMMEDIATELY, then do the work in after().
+  // Vercel cancels an invocation when its caller disconnects — and every
+  // kick here is fire-and-forget (dispatch after(), chain hops, manual
+  // curls). Decoupling the response from the work means caller lifetime
+  // can never kill a memo mid-generation again. One delivery per hop; the
+  // chain continues until the queue is empty.
+  const { data: batch, error } = await db().rpc("claim_deliveries", { batch: 1 });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  const delivery = ((batch ?? []) as DeliveryRow[])[0];
+  if (!delivery) {
+    return NextResponse.json({ ok: true, processed: 0, done: true });
+  }
 
-  // Claim ONE delivery at a time, and only while enough runtime remains to
-  // finish a full memo before the platform kills the function. Anything left
-  // is picked up by the chained invocation below — nothing is ever claimed
-  // and then abandoned mid-generation.
-  while (Date.now() < startedAt + maxDuration * 1000 - PER_MEMO_RESERVE_MS) {
-    const { data: batch, error } = await db().rpc("claim_deliveries", { batch: 1 });
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-    const delivery = ((batch ?? []) as DeliveryRow[])[0];
-    if (!delivery) {
-      return NextResponse.json({ ok: true, processed, done: true });
-    }
-
+  after(async () => {
     try {
       await processDelivery(delivery);
       await db().from("deliveries").update({ status: "sent" }).eq("id", delivery.id);
-      processed++;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`Delivery ${delivery.id} failed:`, message);
@@ -101,10 +98,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         ]);
       }
     }
-  }
-
-  // Time ran short with work possibly remaining — chain a fresh invocation.
-  after(async () => {
+    // Chain the next hop — its handler responds instantly, so this short
+    // fire-and-forget fetch is safe.
     try {
       await fetch(`${cfg.APP_URL}/api/internal/process`, {
         method: "POST",
@@ -113,13 +108,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ hop: hop + 1, chain }),
-      });
+        signal: AbortSignal.timeout(15_000),
+      }).catch((e) => console.error("Failed to chain worker:", e));
     } catch (e) {
       console.error("Failed to chain worker:", e);
     }
   });
 
-  return NextResponse.json({ ok: true, processed, chained: true, hop, chain });
+  return NextResponse.json({ ok: true, claimed: delivery.id, hop, chain });
 }
 
 async function processDelivery(delivery: DeliveryRow): Promise<void> {
