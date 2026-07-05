@@ -55,6 +55,7 @@ export async function generateMemo(args: {
   recentProfileChange?: string;
   /** Shared fact base: when present the writer runs TOOLLESS — fast and cheap. */
   researchBrief?: ResearchBrief;
+  portfolio?: { ticker: string; name: string | null; note: string | null }[];
   referenceLinks?: { label: string; url: string }[];
   /** Final-attempt degradation: fewer tool rounds, no editorial — ship good over perfect. */
   light?: boolean;
@@ -73,6 +74,7 @@ export async function generateMemo(args: {
     review: args.review,
     recentProfileChange: args.recentProfileChange,
     researchBrief: args.researchBrief,
+    portfolio: args.portfolio,
     referenceLinks: args.referenceLinks,
   });
 
@@ -363,6 +365,7 @@ export async function generateVerifiedMemo(args: {
   review?: ReviewContext;
   recentProfileChange?: string;
   researchBrief?: ResearchBrief;
+  portfolio?: { ticker: string; name: string | null; note: string | null }[];
   referenceLinks?: { label: string; url: string }[];
   light?: boolean;
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {

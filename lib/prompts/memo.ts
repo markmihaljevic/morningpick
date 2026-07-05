@@ -14,7 +14,7 @@ export const MEMO_SYSTEM_PROMPT = `You are the senior analyst at Morningpick, wr
 - Search FINDS, fetch READS: when the thesis hinges on a document — the deal announcement, an RNS, a filing, a press release, a provided reference link — use web_fetch to read the primary text before characterizing it. Precise terms from the actual document (consideration structure, conditions, dates) beat a headline's summary. Don't fetch what the dataset already gives you (financials, transcript).
 - If the dataset includes an earnings-call transcript (latestTranscript), USE IT — it is primary evidence. Quote management verbatim where their words sharpen the note (short quotes, attributed: 'the CFO on the ${""}Q1 call: "…"'). Pay special attention to the Q&A: what analysts pressed on, what management dodged. A note that engages with the call beats one that only reads the numbers.
 - Link the reader to primary material INLINE: where a claim rests on a searched source or a provided reference link, wrap 2-5 words of that claim in a markdown link — [the announcement](url), [the Q1 call](url), [its filings](url). Aim for 4-8 inline links across the note, placed exactly where a reader would want to dig deeper on THAT point. Use EXACT urls from your search results or <reference_links> — never construct, shorten, or guess a URL (invalid links are stripped).
-- Your recent coverage is a record of notes YOU sent this subscriber — ideas you pitched, NOT positions they hold. Say "the Genel note I sent you last week", never "you already hold Genel". Claim the subscriber owns something ONLY if their profile explicitly lists it as a holding.
+- Your recent coverage is a record of notes YOU sent this subscriber — ideas you pitched, NOT positions they hold. Say "the Genel note I sent you last week", never "you already hold Genel". Claim the subscriber owns something ONLY if it appears in <subscriber_portfolio> — that list is self-reported and authoritative; nothing else counts as a holding.
 - Output ONLY the memo, starting directly with the H1 — no preamble, no meta-commentary.
 
 ## Structure (markdown; 800–1200 words)
@@ -92,9 +92,20 @@ export function buildMemoUserPrompt(args: {
   recentProfileChange?: string;
   /** The desk's shared fact base — when present, the writer has NO tools and writes from this. */
   researchBrief?: { markdown: string };
+  /** Self-reported holdings — the only source "you hold X" may cite. */
+  portfolio?: { ticker: string; name: string | null; note: string | null }[];
   referenceLinks?: { label: string; url: string }[]; // curated links to weave in inline
 }): string {
   const { profile, ticker, companyName, data, today, selectionRationale } = args;
+
+  const portfolioBlock =
+    args.portfolio && args.portfolio.length > 0
+      ? `<subscriber_portfolio note="Positions the subscriber actually holds, self-reported. Write with these in mind: if today's idea overlaps, complements, or competes with one, say so naturally. Never invent holdings beyond this list.">
+${JSON.stringify(args.portfolio)}
+</subscriber_portfolio>
+
+`
+      : "";
 
   const briefBlock = args.researchBrief
     ? `<research_brief note="Prepared by YOUR research desk this morning. Every event claim in it is sourced with an inline link — when you use one of its facts, carry its link inline. You have NO search or fetch tools on this note: write exclusively from this brief, the dataset, and your coverage memory. If a fact is in neither, it does not go in the note.">
@@ -206,7 +217,7 @@ ${
           .map((l) => `- ${l.label}: ${l.url}`)
           .join("\n")}\n</reference_links>\n\n`
       : ""
-  }${briefBlock}${learningBlock}${coverageBlock}${followupBlock}${secondLookBlock}${reviewBlock}${
+  }${briefBlock}${portfolioBlock}${learningBlock}${coverageBlock}${followupBlock}${secondLookBlock}${reviewBlock}${
     args.review
       ? ""
       : `Chosen ticker: ${ticker}${companyName ? ` (${companyName})` : ""}\n`

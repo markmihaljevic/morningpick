@@ -24,6 +24,7 @@ export interface MemoEmailArgs {
   unsubscribeToken: string;
   billingUrl?: string;
   upgradeUrl?: string;
+  profileUrl?: string;
   preparedFor?: string;
   dateLine?: string;
   stats?: KeyStat[];
@@ -248,6 +249,7 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     unsubscribeToken: args.unsubscribeToken,
     billingUrl: args.billingUrl,
     upgradeUrl: args.upgradeUrl,
+    profileUrl: args.profileUrl,
     preparedFor: args.preparedFor,
     dateLine: args.dateLine,
   });

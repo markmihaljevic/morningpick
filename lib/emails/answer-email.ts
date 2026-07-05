@@ -9,6 +9,7 @@ export interface AnswerEmailArgs {
   questions: string[];
   memoTitle: string | null;
   unsubscribeToken: string;
+  profileUrl?: string;
   /** When the same reply also updated their preferences. */
   feedbackLine: string | null;
 }
@@ -50,5 +51,5 @@ export function renderAnswerEmail(args: AnswerEmailArgs): string {
         : ""
     }`;
 
-  return emailLayout(body, { unsubscribeToken: args.unsubscribeToken });
+  return emailLayout(body, { unsubscribeToken: args.unsubscribeToken, profileUrl: args.profileUrl });
 }

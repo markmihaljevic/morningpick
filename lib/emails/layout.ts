@@ -9,6 +9,8 @@ export interface LayoutArgs {
   billingUrl?: string;
   /** Set for free-tier recipients: renders the upgrade P.S. above the footer. */
   upgradeUrl?: string;
+  /** The analyst's file on this subscriber — transparency link in the fine print. */
+  profileUrl?: string;
   /** Shown in the letterhead line, e.g. "MARK@EXAMPLE.COM" */
   preparedFor?: string;
   /** Date in the letterhead line, e.g. "5 July 2026" */
@@ -75,6 +77,10 @@ export function emailLayout(bodyHtml: string, args: LayoutArgs): string {
           Not investment advice. This note is AI-generated, for informational and entertainment purposes only,
           and may contain errors. Always do your own research and consider consulting a licensed financial adviser.<br/>
           ${escapeHtml(cfg.POSTAL_ADDRESS)} · <a href="https://morningpick.ai" style="color:#9AA3AB;">morningpick.ai</a>${
+            args.profileUrl
+              ? ` · <a href="${args.profileUrl}" style="color:#9AA3AB;">What I know about you</a>`
+              : ""
+          }${
             args.billingUrl
               ? ` · <a href="${args.billingUrl}" style="color:#9AA3AB;">Manage billing</a>`
               : ""

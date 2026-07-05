@@ -41,6 +41,9 @@ export async function answerQuestions(args: {
   subjectContext?: { ticker: string; title: string } | null;
   /** Earlier Q&A exchanges in this thread — the desk remembers what it said. */
   priorThread?: { question: string; answer: string }[];
+  /** Self-reported holdings — context for answers that touch what they own. */
+  portfolio?: { ticker: string; name: string | null; note: string | null }[];
+  profileUrl?: string;
   questions: string[];
   profile: Profile;
   feedbackApplied: boolean;
@@ -99,6 +102,9 @@ export async function answerQuestions(args: {
             ? `<replied_to_note ticker="${args.subjectContext.ticker}" title="${args.subjectContext.title.replace(/"/g, "'")}" note="The subscriber replied to this research note. You do NOT have its full text — answer about THIS company from the dataset and web research, and don't pretend to quote the note.">\n</replied_to_note>\n\n`
             : "") +
         (dataset ? `<dataset>\n${JSON.stringify(dataset)}\n</dataset>\n\n` : "") +
+        (args.portfolio && args.portfolio.length > 0
+          ? `<subscriber_portfolio note="positions they actually hold (self-reported) — answer with these in mind">\n${JSON.stringify(args.portfolio)}\n</subscriber_portfolio>\n\n`
+          : "") +
         (args.priorThread && args.priorThread.length > 0
           ? `<prior_thread note="your earlier exchanges in this same thread — don't repeat yourself, build on what you already told them">\n${args.priorThread
               .map((t) => `Q: ${t.question.slice(0, 400)}\nA: ${t.answer.slice(0, 1500)}`)
@@ -134,6 +140,7 @@ export async function answerQuestions(args: {
     answerMarkdown: markdown,
     questions: args.questions,
     memoTitle: args.memo?.title ?? args.subjectContext?.title ?? null,
+    profileUrl: args.profileUrl,
     unsubscribeToken: args.unsubscribeToken,
     feedbackLine: args.feedbackApplied && args.ackSummary ? args.ackSummary : null,
   });

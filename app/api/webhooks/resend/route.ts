@@ -325,6 +325,7 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
       }));
     }
 
+    const { getPortfolio } = await import("@/lib/portfolio");
     const answerPromise = answerQuestions({
       subscriberId: subscriber.id,
       subscriberEmail: subscriber.email,
@@ -333,6 +334,8 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
       memo: memoRow,
       subjectContext,
       priorThread,
+      portfolio: await getPortfolio(subscriber.id),
+      profileUrl: `${config().APP_URL}/profile/${subscriber.portal_token}`,
       questions: interpretation.questions.slice(0, 3),
       profile: {
         structured: (profile?.structured as Record<string, unknown>) ?? {},

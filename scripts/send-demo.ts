@@ -26,6 +26,7 @@ import { buildCompsRows } from "../lib/comps";
 import { buildStreetItems } from "../lib/street";
 import { discoverPrimarySources } from "../lib/enrich-sources";
 import { getOrBuildBrief } from "../lib/research";
+import { getPortfolio } from "../lib/portfolio";
 import { sendEmail, replyAddress } from "../lib/resend";
 
 const REPEAT_EXCLUSION_DAYS = 90; // match the worker
@@ -194,6 +195,7 @@ async function main() {
 
   const researchBrief =
     memoKind === "review" ? null : await getOrBuildBrief(ticker, companyName, data, "demo");
+  const holdings = await getPortfolio(subscriber.id);
   console.error(`Research brief: ${researchBrief ? `ready (${researchBrief.sources.length} sources)` : "unavailable — legacy path"}`);
   console.error(`Generating + fact-checking ${memoKind} note…`);
   const [memo, chartUrl] = await Promise.all([
@@ -208,6 +210,7 @@ async function main() {
       secondLook: secondLookContext,
       review: reviewContext,
       researchBrief: researchBrief ?? undefined,
+      portfolio: holdings,
       referenceLinks,
     }),
     memoKind === "review"
@@ -222,6 +225,7 @@ async function main() {
   const html = renderMemoEmail({
     markdown: memo.markdown,
     unsubscribeToken: subscriber.unsubscribe_token,
+    profileUrl: `https://morningpick.ai/profile/${subscriber.portal_token}`,
     preparedFor: subscriber.email,
     dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
     stats: memoKind === "review" ? [] : buildKeyStats(data),

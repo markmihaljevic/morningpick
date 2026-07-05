@@ -17,6 +17,7 @@ import { buildStreetItems } from "@/lib/street";
 import { discoverPrimarySources } from "@/lib/enrich-sources";
 import { isDailyPlan } from "@/lib/billing";
 import { getOrBuildBrief } from "@/lib/research";
+import { getPortfolio } from "@/lib/portfolio";
 import {
   getCoverageContext,
   coverageForPrompt,
@@ -410,6 +411,9 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     const researchBrief =
       memoKind === "review" ? null : await getOrBuildBrief(ticker, companyName, data, delivery.id);
 
+    // Context-only holdings: the writer sees what they own; selection doesn't.
+    const holdings = await getPortfolio(subscriber.id);
+
     // Final queue attempt: ship good over perfect — fewer tool rounds, no
     // editorial pass, one repair round. Slow-API days must not eat all three
     // attempts chasing a ceiling that depth can't fit under.
@@ -428,6 +432,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
         review: reviewContext,
         recentProfileChange,
         researchBrief: researchBrief ?? undefined,
+        portfolio: holdings,
         referenceLinks,
         light: lightMode,
       }),
@@ -471,6 +476,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
         subscriber.plan === "paid"
           ? `${config().APP_URL}/api/billing/${subscriber.portal_token}`
           : undefined,
+      profileUrl: `${config().APP_URL}/profile/${subscriber.portal_token}`,
       upgradeUrl: isDailyPlan(subscriber.plan)
         ? undefined
         : `${config().APP_URL}/api/upgrade/${subscriber.portal_token}`,
