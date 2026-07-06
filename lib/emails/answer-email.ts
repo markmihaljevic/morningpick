@@ -1,8 +1,5 @@
 import { marked } from "marked";
 import { emailLayout, escapeHtml } from "./layout";
-import { BRAND } from "../brand";
-
-const MONO = "Menlo, Consolas, 'Courier New', monospace";
 
 export interface AnswerEmailArgs {
   answerMarkdown: string;
@@ -14,42 +11,31 @@ export interface AnswerEmailArgs {
   feedbackLine: string | null;
 }
 
-/** In-thread research-desk answer to a subscriber's question(s). */
+/** In-thread research-desk answer — a plain reply, like a person would send. */
 export function renderAnswerEmail(args: AnswerEmailArgs): string {
   const html = marked.parse(args.answerMarkdown, { async: false }) as string;
   const styled = html
-    .replace(/<h2>([\s\S]*?)<\/h2>/g, (_, inner: string) =>
-      `<div style="margin:24px 0 8px;"><span style="font-family:${MONO};font-size:11px;letter-spacing:2.5px;color:${BRAND.gold};font-weight:700;">${inner.toUpperCase()}</span></div>`,
-    )
+    .replace(/<h2>([\s\S]*?)<\/h2>/g, (_, inner: string) => `<p style="margin:16px 0 4px;"><b>${inner}</b></p>`)
     .replace(/<p>/g, '<p style="margin:0 0 14px;">')
     .replace(/<ol>/g, '<ol style="margin:0 0 14px;padding-left:22px;">')
     .replace(/<ul>/g, '<ul style="margin:0 0 14px;padding-left:22px;">')
-    .replace(/<li>/g, '<li style="margin:0 0 7px;">')
-    .replace(/<strong>/g, `<strong style="color:${BRAND.ink};">`);
+    .replace(/<li>/g, '<li style="margin:0 0 6px;">')
+    .replace(/<a href=/g, `<a style="color:#1155cc;" href=`);
+
+  const quoted = args.questions
+    .map((q) => `<p style="margin:0 0 6px;color:#5f6368;">&gt; ${escapeHtml(q)}</p>`)
+    .join("\n");
 
   const body = `
-    <p style="margin:0 0 6px;font-family:${MONO};font-size:10px;letter-spacing:2px;color:${BRAND.gold};font-weight:700;">FROM THE RESEARCH DESK</p>
-    ${
-      args.memoTitle
-        ? `<p style="margin:0 0 16px;font-family:${BRAND.sans};font-size:12.5px;color:${BRAND.slate};">Re: ${escapeHtml(args.memoTitle)}</p>`
-        : ""
-    }
-    <div style="border-left:3px solid ${BRAND.rule};padding:2px 0 2px 14px;margin:0 0 18px;">
-      ${args.questions
-        .map(
-          (q) =>
-            `<p style="margin:0 0 6px;font-family:${BRAND.serif};font-size:14.5px;font-style:italic;color:${BRAND.slate};">&ldquo;${escapeHtml(q)}&rdquo;</p>`,
-        )
-        .join("\n")}
-    </div>
-    ${styled}
+    <p style="margin:0 0 14px;">Good question —</p>
+    ${quoted}
+    <div style="margin:14px 0 0;">${styled}</div>
     ${
       args.feedbackLine
-        ? `<p style="margin:20px 0 0;font-family:${BRAND.sans};font-size:12.5px;color:${BRAND.slate};border-top:1px solid ${BRAND.rule};padding-top:12px;">
-            <strong style="color:${BRAND.ink};">Also noted:</strong> ${escapeHtml(args.feedbackLine)}
-          </p>`
+        ? `<p style="margin:18px 0 0;color:#5f6368;">(Also noted: ${escapeHtml(args.feedbackLine)} — that goes into how I pick for you from here.)</p>`
         : ""
-    }`;
+    }
+    <p style="margin:18px 0 0;">— Your analyst</p>`;
 
   return emailLayout(body, { unsubscribeToken: args.unsubscribeToken, profileUrl: args.profileUrl });
 }

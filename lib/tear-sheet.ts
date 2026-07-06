@@ -1,6 +1,5 @@
 import React from "react";
 import { renderToBuffer, type DocumentProps } from "@react-pdf/renderer";
-import { config } from "./config";
 import { TearSheet } from "./pdf/tear-sheet";
 import { buildKeyStats } from "./stats";
 import { buildCompsRows } from "./comps";
@@ -22,23 +21,32 @@ export async function buildTearSheet(args: {
   meta: MemoMeta | null;
 }): Promise<Buffer | null> {
   try {
-    const currency = ((): string | undefined => {
-      const p = Array.isArray(args.data.profile) ? args.data.profile[0] : args.data.profile;
-      return (p as { currency?: string } | undefined)?.currency;
-    })();
+    const p = (Array.isArray(args.data.profile) ? args.data.profile[0] : args.data.profile) as
+      | { currency?: string; description?: string; sector?: string; industry?: string }
+      | undefined;
+    const currency = p?.currency;
+    const rawDescr = (p?.description ?? "").trim();
+    // First two sentences, capped — enough to say what the business is.
+    const companyDescription =
+      rawDescr
+        .split(/(?<=[.!?])\s+/)
+        .slice(0, 2)
+        .join(" ")
+        .slice(0, 300) || undefined;
+    const sector = p?.sector || p?.industry || undefined;
     const chartUrl = await buildFiveYearChartUrl(args.ticker, currency);
     const buffer = await renderToBuffer(
       // TearSheet returns a <Document>; createElement can't see that through the fn type.
       React.createElement(TearSheet, {
         ticker: args.ticker,
         companyName: args.companyName,
+        companyDescription,
+        sector,
         dateLine: args.dateLine,
-        preparedFor: args.preparedFor,
         meta: args.meta,
         stats: buildKeyStats(args.data),
         comps: buildCompsRows(args.ticker, args.data),
         chartUrl,
-        postalAddress: config().POSTAL_ADDRESS,
       }) as React.ReactElement<DocumentProps>,
     );
     return Buffer.from(buffer);

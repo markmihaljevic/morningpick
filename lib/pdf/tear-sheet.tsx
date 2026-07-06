@@ -1,84 +1,68 @@
 import React from "react";
 import { Document, Page, Text, View, Image, StyleSheet } from "@react-pdf/renderer";
-import { BRAND } from "../brand";
 import type { KeyStat } from "../stats";
 import type { CompsRow } from "../comps";
 import type { MemoMeta } from "../memo";
 
+// A restrained, professional palette — no brand colours. Reads like a broker
+// fact sheet, not a marketing one-pager.
+const INK = "#111827";
+const GREY = "#6b7280";
+const RULE = "#d1d5db";
+const RULE_LIGHT = "#e5e7eb";
+
 const S = StyleSheet.create({
   page: {
-    backgroundColor: "#FFFFFF",
-    paddingTop: 44,
-    paddingBottom: 56,
-    paddingHorizontal: 48,
+    backgroundColor: "#ffffff",
+    paddingTop: 40,
+    paddingBottom: 46,
+    paddingHorizontal: 46,
     fontFamily: "Helvetica",
     fontSize: 9,
-    color: BRAND.ink,
+    color: INK,
   },
-  masthead: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 32,
-    backgroundColor: BRAND.ink,
-    borderBottomWidth: 2,
-    borderBottomColor: BRAND.gold,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 48,
-  },
-  wordmark: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 3, color: "#FBFAF6" },
-  mastRight: { fontFamily: "Helvetica", fontSize: 6.5, letterSpacing: 1.5, color: "#8FA0B0" },
-  kicker: { fontFamily: "Helvetica", fontSize: 6.5, letterSpacing: 1.5, color: BRAND.slate, marginTop: 4 },
-  title: { fontFamily: "Times-Bold", fontSize: 17, marginTop: 8 },
-  company: { fontFamily: "Helvetica", fontSize: 9, color: BRAND.slate, marginTop: 2, marginBottom: 10 },
-  chips: { flexDirection: "row", gap: 5, marginBottom: 10 },
-  chip: { borderWidth: 0.75, borderColor: BRAND.rule, paddingVertical: 3, paddingHorizontal: 6 },
-  chipGold: { borderColor: BRAND.gold, backgroundColor: "#FAF3E3" },
-  chipLabel: { fontSize: 4.5, letterSpacing: 1, color: BRAND.slate },
-  chipValue: { fontFamily: "Helvetica-Bold", fontSize: 8, marginTop: 1 },
-  oneLiner: {
-    fontFamily: "Times-Italic",
-    fontSize: 11,
-    borderLeftWidth: 2,
-    borderLeftColor: BRAND.gold,
-    paddingLeft: 8,
-    paddingVertical: 3,
-    marginBottom: 14,
-  },
-  sectionLabel: {
+  headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
+  company: { fontFamily: "Times-Bold", fontSize: 16 },
+  subline: { fontFamily: "Helvetica", fontSize: 8, color: GREY, marginTop: 2 },
+  headDate: { fontFamily: "Helvetica", fontSize: 8, color: GREY },
+  rule: { borderBottomWidth: 1, borderBottomColor: INK, marginTop: 6, marginBottom: 10 },
+  descr: { fontFamily: "Times-Roman", fontSize: 9.5, lineHeight: 1.4, marginBottom: 10, color: "#374151" },
+  callLine: { fontFamily: "Times-Italic", fontSize: 11, lineHeight: 1.4, marginBottom: 4 },
+  verdict: { fontFamily: "Helvetica", fontSize: 8, color: GREY, marginBottom: 14 },
+  h: {
     fontFamily: "Helvetica-Bold",
-    fontSize: 7,
-    letterSpacing: 2,
-    color: BRAND.gold,
-    marginTop: 14,
-    marginBottom: 6,
-    borderTopWidth: 0.75,
-    borderTopColor: BRAND.rule,
-    paddingTop: 8,
+    fontSize: 7.5,
+    letterSpacing: 1.5,
+    color: GREY,
+    marginTop: 15,
+    marginBottom: 5,
   },
-  statsRow: { flexDirection: "row" },
-  statCell: { flex: 1, borderWidth: 0.75, borderColor: BRAND.rule, paddingVertical: 5, paddingHorizontal: 6 },
-  statLabel: { fontSize: 5, letterSpacing: 1, color: BRAND.slate },
-  statValue: { fontFamily: "Helvetica-Bold", fontSize: 10, marginTop: 2 },
-  chart: { marginTop: 4, borderWidth: 0.75, borderColor: BRAND.rule },
-  tr: { flexDirection: "row", borderBottomWidth: 0.5, borderBottomColor: BRAND.rule, paddingVertical: 3 },
-  th: { fontFamily: "Helvetica-Bold", fontSize: 6, letterSpacing: 1, color: BRAND.slate },
-  scenarioRow: { flexDirection: "row", marginBottom: 5 },
-  scenarioTag: { width: 34, fontFamily: "Helvetica-Bold", fontSize: 8 },
-  scenarioText: { flex: 1, fontFamily: "Times-Roman", fontSize: 9.5, lineHeight: 1.35 },
+  statsWrap: { flexDirection: "row", flexWrap: "wrap" },
+  statCell: {
+    width: "25%",
+    borderTopWidth: 0.5,
+    borderTopColor: RULE_LIGHT,
+    paddingVertical: 5,
+    paddingRight: 8,
+  },
+  statLabel: { fontSize: 6, letterSpacing: 0.5, color: GREY },
+  statValue: { fontFamily: "Helvetica-Bold", fontSize: 11, marginTop: 2 },
+  chart: { marginTop: 2, borderWidth: 0.5, borderColor: RULE_LIGHT },
+  tr: { flexDirection: "row", borderBottomWidth: 0.5, borderBottomColor: RULE_LIGHT, paddingVertical: 3.5 },
+  th: { fontFamily: "Helvetica-Bold", fontSize: 6.5, letterSpacing: 0.5, color: GREY },
+  scRow: { flexDirection: "row", marginBottom: 5 },
+  scTag: { width: 36, fontFamily: "Helvetica-Bold", fontSize: 8.5 },
+  scText: { flex: 1, fontFamily: "Times-Roman", fontSize: 9.5, lineHeight: 1.35 },
   footer: {
     position: "absolute",
     bottom: 20,
-    left: 48,
-    right: 48,
-    borderTopWidth: 0.75,
-    borderTopColor: BRAND.rule,
+    left: 46,
+    right: 46,
+    borderTopWidth: 0.5,
+    borderTopColor: RULE,
     paddingTop: 6,
-    fontSize: 5.5,
-    color: BRAND.slate,
+    fontSize: 6,
+    color: GREY,
     lineHeight: 1.5,
   },
 });
@@ -86,82 +70,63 @@ const S = StyleSheet.create({
 export interface TearSheetArgs {
   ticker: string;
   companyName?: string;
+  companyDescription?: string;
+  sector?: string;
   dateLine: string;
-  preparedFor?: string;
   meta?: MemoMeta | null;
   stats: KeyStat[];
   comps: CompsRow[];
   chartUrl?: string | null;
-  postalAddress: string;
 }
 
 /**
- * The one-page tear sheet — the analyst's model, attached. Everything visual
- * that would clutter the prose email (chart, key stats, peer comps, the
- * scenario math) lives here instead, at a glance.
+ * A one-page company fact sheet — the workup behind the morning note.
+ * Deliberately plain and professional: the kind of tear sheet a competent
+ * analyst assembles, not a branded artefact.
  */
 export function TearSheet(args: TearSheetArgs) {
-  const half = Math.ceil(args.stats.length / 2);
   const scen = args.meta?.scenarios;
+  const subline = [args.ticker, args.sector].filter(Boolean).join("  ·  ");
 
   return (
-    <Document title={`${args.ticker} — tear sheet`} author="Morningpick" creator="morningpick.ai">
+    <Document title={`${args.ticker} — fact sheet`} author="Morningpick" creator="morningpick.ai">
       <Page size="A4" style={S.page}>
-        <View style={S.masthead} fixed>
-          <Text style={S.wordmark}>MORNINGPICK</Text>
-          <Text style={S.mastRight}>TEAR SHEET · {args.dateLine.toUpperCase()}</Text>
-        </View>
-
-        {args.preparedFor && (
-          <Text style={S.kicker}>THE WORKUP BEHIND THIS MORNING&apos;S NOTE · FOR {args.preparedFor.toUpperCase()}</Text>
-        )}
-        <Text style={S.title}>{args.ticker}</Text>
-        {args.companyName && <Text style={S.company}>{args.companyName}</Text>}
-
-        {args.meta && (
-          <View style={S.chips}>
-            {[
-              ["CONVICTION", `${args.meta.conviction}/10`, true],
-              ["HORIZON", args.meta.horizon.toUpperCase(), false],
-              ...args.meta.style_tags.map((t) => ["STYLE", t.toUpperCase(), false] as const),
-            ].map(([label, value, gold], i) => (
-              <View key={i} style={gold ? [S.chip, S.chipGold] : S.chip}>
-                <Text style={S.chipLabel}>{label}</Text>
-                <Text style={S.chipValue}>{value}</Text>
-              </View>
-            ))}
+        <View style={S.headRow}>
+          <View>
+            <Text style={S.company}>{args.companyName ?? args.ticker}</Text>
+            {subline ? <Text style={S.subline}>{subline}</Text> : null}
           </View>
-        )}
+          <Text style={S.headDate}>{args.dateLine}</Text>
+        </View>
+        <View style={S.rule} />
 
-        {args.meta?.one_liner && <Text style={S.oneLiner}>{args.meta.one_liner}</Text>}
+        {args.companyDescription ? <Text style={S.descr}>{args.companyDescription}</Text> : null}
+
+        {args.meta?.one_liner && <Text style={S.callLine}>{args.meta.one_liner}</Text>}
+        {args.meta && (
+          <Text style={S.verdict}>
+            Conviction {args.meta.conviction}/10 · Horizon {args.meta.horizon}
+            {args.meta.style_tags.length ? ` · ${args.meta.style_tags.join(" · ")}` : ""}
+          </Text>
+        )}
 
         {args.stats.length > 0 && (
           <>
-            <Text style={S.sectionLabel}>KEY FIGURES</Text>
-            <View style={S.statsRow}>
-              {args.stats.slice(0, half).map((s, i) => (
+            <Text style={S.h}>KEY FIGURES</Text>
+            <View style={S.statsWrap}>
+              {args.stats.map((s, i) => (
                 <View key={i} style={S.statCell}>
                   <Text style={S.statLabel}>{s.label.toUpperCase()}</Text>
                   <Text style={S.statValue}>{s.value}</Text>
                 </View>
               ))}
             </View>
-            {args.stats.length > half && (
-              <View style={S.statsRow}>
-                {args.stats.slice(half).map((s, i) => (
-                  <View key={i} style={S.statCell}>
-                    <Text style={S.statLabel}>{s.label.toUpperCase()}</Text>
-                    <Text style={S.statValue}>{s.value}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
           </>
         )}
 
         {args.chartUrl && (
           <>
-            <Text style={S.sectionLabel}>FIVE YEARS</Text>
+            <Text style={S.h}>SHARE PRICE — 5 YEARS</Text>
             {/* eslint-disable-next-line jsx-a11y/alt-text */}
             <Image src={args.chartUrl} style={S.chart} />
           </>
@@ -169,8 +134,8 @@ export function TearSheet(args: TearSheetArgs) {
 
         {args.comps.length > 0 && (
           <>
-            <Text style={S.sectionLabel}>VERSUS PEERS</Text>
-            <View style={[S.tr, { borderBottomWidth: 0.75, borderBottomColor: BRAND.ink }]}>
+            <Text style={S.h}>VALUATION VS PEERS</Text>
+            <View style={[S.tr, { borderBottomWidth: 0.75, borderBottomColor: INK }]}>
               <Text style={[S.th, { flex: 2 }]}> </Text>
               {["P/E", "EV/EBITDA", "P/B", "P/S"].map((h) => (
                 <Text key={h} style={[S.th, { flex: 1, textAlign: "right" }]}>
@@ -185,10 +150,11 @@ export function TearSheet(args: TearSheetArgs) {
                     flex: 2,
                     fontFamily: r.self ? "Helvetica-Bold" : "Helvetica",
                     fontSize: 8.5,
-                    color: r.self ? BRAND.ink : BRAND.slate,
+                    color: r.self ? INK : GREY,
                   }}
                 >
                   {r.label}
+                  {r.self ? "  (this name)" : ""}
                 </Text>
                 {[r.pe, r.evEbitda, r.pb, r.ps].map((v, j) => (
                   <Text
@@ -198,7 +164,7 @@ export function TearSheet(args: TearSheetArgs) {
                       textAlign: "right",
                       fontFamily: r.self ? "Helvetica-Bold" : "Helvetica",
                       fontSize: 8.5,
-                      color: r.self ? BRAND.ink : BRAND.slate,
+                      color: r.self ? INK : GREY,
                     }}
                   >
                     {v}
@@ -211,7 +177,7 @@ export function TearSheet(args: TearSheetArgs) {
 
         {scen && (
           <>
-            <Text style={S.sectionLabel}>SCENARIOS</Text>
+            <Text style={S.h}>SCENARIOS</Text>
             {([
               ["Bear", scen.bear],
               ["Base", scen.base],
@@ -219,9 +185,9 @@ export function TearSheet(args: TearSheetArgs) {
             ] as const)
               .filter(([, v]) => v)
               .map(([tag, v], i) => (
-                <View key={i} style={S.scenarioRow}>
-                  <Text style={S.scenarioTag}>{tag}</Text>
-                  <Text style={S.scenarioText}>{v}</Text>
+                <View key={i} style={S.scRow}>
+                  <Text style={S.scTag}>{tag}</Text>
+                  <Text style={S.scText}>{v}</Text>
                 </View>
               ))}
           </>
@@ -229,10 +195,9 @@ export function TearSheet(args: TearSheetArgs) {
 
         <View style={S.footer} fixed>
           <Text>
-            The tear sheet is the data behind the note in your inbox — read the note for the
-            argument. Not investment advice; AI-generated, may contain errors; do your own research.
-            {" "}
-            {args.postalAddress} · morningpick.ai
+            Sources: company filings and market data. The argument is in the accompanying note; this
+            sheet is the underlying data. Not investment advice — for information only, may contain
+            errors. Morningpick · morningpick.ai
           </Text>
         </View>
       </Page>

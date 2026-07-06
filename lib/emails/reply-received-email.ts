@@ -1,5 +1,4 @@
 import { emailLayout, escapeHtml } from "./layout";
-import { BRAND } from "../brand";
 
 /**
  * The instant confirmation an analyst would actually send — within seconds
@@ -15,10 +14,8 @@ export function renderReplyReceivedEmail(args: {
   const body = `
     <p style="margin:0 0 14px;">${greeting},</p>
     <p style="margin:0 0 14px;">Got your note — thank you.</p>
-    <blockquote style="margin:0 0 14px;padding:2px 0 2px 14px;border-left:2px solid ${BRAND.rule};color:${BRAND.slate};font-style:italic;">${escapeHtml(
-      args.replySnippet,
-    )}</blockquote>
-    <p style="margin:0 0 14px;">I'm on it. Anything about your preferences goes straight into how I pick for you — you'll see it reflected from the next note. If there's a question in there, the researched answer follows in this thread; give me a little while if it needs real digging.</p>
+    <p style="margin:0 0 14px;color:#5f6368;">&gt; ${escapeHtml(args.replySnippet)}</p>
+    <p style="margin:0 0 14px;">I'm on it. Anything about your preferences goes straight into how I pick for you — you'll see it from the next note. If there's a question in there, the researched answer follows in this thread; give me a little while if it needs real digging.</p>
     <p style="margin:0;">— Your analyst</p>
   `;
   return emailLayout(body, { unsubscribeToken: args.unsubscribeToken });
