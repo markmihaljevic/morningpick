@@ -13,18 +13,13 @@ import { writeFileSync } from "fs";
 import { db } from "../lib/db";
 import type { Profile } from "../lib/profile";
 import { type ScreenParams } from "../lib/screens";
-import { getCoverageContext, coverageForPrompt, buildBookRows } from "../lib/coverage";
+import { getCoverageContext, coverageForPrompt } from "../lib/coverage";
 import { decideNote, fallbackNote, type NoteKind } from "../lib/desk-editor";
 import { selectIdeaWithPreflight, updateWatchlist } from "../lib/select-idea";
 import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "../lib/fmp";
 import { generateVerifiedMemo } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
-import { buildFiveYearChartUrl } from "../lib/chart";
 import { buildResearchLinks } from "../lib/research-links";
-import { buildKeyStats } from "../lib/stats";
-import { buildCompsRows } from "../lib/comps";
-import { buildStreetItems } from "../lib/street";
-import { discoverPrimarySources } from "../lib/enrich-sources";
 import { getOrBuildBrief } from "../lib/research";
 import { getPortfolio } from "../lib/portfolio";
 import { sendEmail, replyAddress } from "../lib/resend";
@@ -178,49 +173,34 @@ async function main() {
 
   if (!ticker) throw new Error(`Desk decision '${decision.kind}' resolved no ticker.`);
   if (!data) data = await fetchTickerData(ticker);
-  const primarySources =
-    memoKind === "review" ? [] : await discoverPrimarySources(ticker, companyName ?? ticker);
   const companyProfile = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
     | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
     | undefined;
-  const researchLinks =
+  const referenceLinks =
     memoKind === "review" ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
-  const referenceLinks = [
-    ...researchLinks,
-    ...primarySources.map((s) => ({ label: s.title, url: s.url })),
-  ];
-  console.error(
-    `Primary sources: ${primarySources.map((s) => `[${s.type}] ${s.title}`).join(" | ") || "none"}`,
-  );
 
   const researchBrief =
     memoKind === "review" ? null : await getOrBuildBrief(ticker, companyName, data, "demo");
   const holdings = await getPortfolio(subscriber.id);
   console.error(`Research brief: ${researchBrief ? `ready (${researchBrief.sources.length} sources)` : "unavailable — legacy path"}`);
   console.error(`Generating + fact-checking ${memoKind} note…`);
-  const [memo, chartUrl] = await Promise.all([
-    generateVerifiedMemo({
-      profile,
-      ticker,
-      companyName,
-      data,
-      selectionRationale,
-      coverage,
-      followup: followupContext,
-      secondLook: secondLookContext,
-      review: reviewContext,
-      researchBrief: researchBrief ?? undefined,
-      portfolio: holdings,
-      referenceLinks,
-    }),
-    memoKind === "review"
-      ? Promise.resolve(null)
-      : buildFiveYearChartUrl(ticker, companyProfile?.currency),
-  ]);
+  const memo = await generateVerifiedMemo({
+    profile,
+    ticker,
+    companyName,
+    data,
+    selectionRationale,
+    coverage,
+    followup: followupContext,
+    secondLook: secondLookContext,
+    review: reviewContext,
+    researchBrief: researchBrief ?? undefined,
+    portfolio: holdings,
+    referenceLinks,
+  });
   console.error(
     `Verification: ${memo.verification.critical_issues.length} critical, ${memo.verification.minor_issues.length} minor issues`,
   );
-  console.error(`Chart: ${chartUrl ?? "none"}`);
 
   const html = renderMemoEmail({
     markdown: memo.markdown,
@@ -228,17 +208,6 @@ async function main() {
     profileUrl: `https://morningpick.ai/profile/${subscriber.portal_token}`,
     preparedFor: subscriber.email,
     dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
-    stats: memoKind === "review" ? [] : buildKeyStats(data),
-    street: memoKind === "review" ? [] : buildStreetItems(data),
-    comps: memoKind === "review" ? [] : buildCompsRows(ticker, data),
-    book:
-      process.env.FORCE_BOOK || new Date().getUTCDay() === 1 || memoKind === "review"
-        ? buildBookRows(coverageItems)
-        : [],
-    meta: memoKind === "review" ? null : memo.meta,
-    primarySources,
-    chartUrl,
-    sources: memo.sources,
   });
   const htmlPath = process.env.DEMO_HTML_OUT;
   if (htmlPath) {

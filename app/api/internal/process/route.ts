@@ -8,20 +8,14 @@ import { sendAdminAlert } from "@/lib/alerts";
 import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "@/lib/fmp";
 import { generateVerifiedMemo } from "@/lib/memo";
 import { renderMemoEmail } from "@/lib/emails/memo-email";
-import { buildFiveYearChartUrl } from "@/lib/chart";
 import { buildResearchLinks } from "@/lib/research-links";
 import { extractPitchPrice } from "@/lib/performance";
-import { buildKeyStats } from "@/lib/stats";
-import { buildCompsRows } from "@/lib/comps";
-import { buildStreetItems } from "@/lib/street";
-import { discoverPrimarySources } from "@/lib/enrich-sources";
 import { isDailyPlan } from "@/lib/billing";
 import { getOrBuildBrief } from "@/lib/research";
 import { getPortfolio } from "@/lib/portfolio";
 import {
   getCoverageContext,
   coverageForPrompt,
-  buildBookRows,
   type CoverageItem,
   type TasteSignal,
 } from "@/lib/coverage";
@@ -285,11 +279,12 @@ async function buildPlan(
     throw new Error(`Desk decision '${decision.kind}' resolved no ticker — aborting delivery.`);
   }
   if (!data && decision.kind !== "review") data = await fetchTickerData(ticker);
-  const primarySources =
-    decision.kind === "review" ? [] : await discoverPrimarySources(ticker, companyName ?? ticker);
   const companyProfile = (data && (Array.isArray(data.profile) ? data.profile[0] : data.profile)) as
     | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
     | undefined;
+  // Deterministic registry links (IR page, filings) for inline citing. The
+  // shared research brief already surfaces the primary sources that matter,
+  // so we no longer run a separate (expensive) discovery pass per subscriber.
   const researchLinks =
     decision.kind === "review" ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
 
@@ -301,9 +296,9 @@ async function buildPlan(
     followupContext,
     secondLookContext,
     reviewContext,
-    referenceLinks: [...researchLinks, ...primarySources.map((s) => ({ label: s.title, url: s.url }))],
+    referenceLinks: researchLinks,
     researchLinks,
-    primarySources,
+    primarySources: [],
     coverage,
     firstNote,
     recentProfileChange,
@@ -419,27 +414,22 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     // attempts chasing a ceiling that depth can't fit under.
     const lightMode = (delivery.attempts ?? 0) >= 3;
     if (lightMode) console.warn(`Final attempt for ${delivery.id} — light mode.`);
-    const [memo, chartUrl] = await Promise.all([
-      generateVerifiedMemo({
-        profile,
-        ticker,
-        companyName,
-        data,
-        selectionRationale,
-        coverage,
-        followup: followupContext,
-        secondLook: secondLookContext,
-        review: reviewContext,
-        recentProfileChange,
-        researchBrief: researchBrief ?? undefined,
-        portfolio: holdings,
-        referenceLinks,
-        light: lightMode,
-      }),
-      memoKind === "review"
-        ? Promise.resolve(null)
-        : buildFiveYearChartUrl(ticker, companyProfile?.currency),
-    ]);
+    const memo = await generateVerifiedMemo({
+      profile,
+      ticker,
+      companyName,
+      data,
+      selectionRationale,
+      coverage,
+      followup: followupContext,
+      secondLook: secondLookContext,
+      review: reviewContext,
+      recentProfileChange,
+      researchBrief: researchBrief ?? undefined,
+      portfolio: holdings,
+      referenceLinks,
+      light: lightMode,
+    });
     title = memo.title;
     if (memoKind === "followup") metaForVerdict = memo.meta;
     quality = {
@@ -453,12 +443,6 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       verifyMinor: memo.verification.minor_issues.length,
       genMs: Date.now() - genStartedAt,
     };
-    const stats = memoKind === "review" ? [] : buildKeyStats(data);
-    const street = memoKind === "review" ? [] : buildStreetItems(data);
-    const comps = memoKind === "review" ? [] : buildCompsRows(ticker, data);
-    // The Monday ledger: open calls marked to market (also under review notes).
-    const isMonday = new Date().getUTCDay() === 1;
-    const book = isMonday || memoKind === "review" ? buildBookRows(coverageItems) : [];
     const pitch = extractPitchPrice(data);
     const dateLine = new Date(delivery.delivery_date + "T00:00:00Z").toLocaleDateString("en-GB", {
       day: "numeric",
@@ -482,15 +466,6 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
         : `${config().APP_URL}/api/upgrade/${subscriber.portal_token}`,
       preparedFor: subscriber.email,
       dateLine,
-      stats,
-      street,
-      meta: memo.meta,
-      primarySources,
-      chartUrl,
-      comps,
-      book,
-      sources: memo.sources,
-      pdfUrl: `${config().APP_URL}/api/memo/${memoId}/pdf`,
     });
     const { error: memoError } = await db().from("memos").insert({
       id: memoId,
@@ -506,7 +481,8 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       kind: memoKind,
       pitch_price: pitch.price,
       pitch_currency: pitch.currency,
-      extras: { chartUrl, researchLinks, sources: memo.sources, stats, street, comps, meta: memo.meta, primarySources, dateLine },
+      // Keep only what coverage/telemetry read back — the email is prose now.
+      extras: { researchLinks, sources: memo.sources, meta: memo.meta, dateLine },
     });
     if (memoError) throw new Error(`Memo insert failed: ${memoError.message}`);
   }
