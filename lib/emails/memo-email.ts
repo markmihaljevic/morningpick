@@ -10,6 +10,8 @@ import type { BookRow } from "../coverage";
 
 export interface MemoEmailArgs {
   markdown: string;
+  /** First name for the salutation — "Good morning, Mark,". Null → "Good morning,". */
+  greetingName?: string | null;
   /** True for a subscriber's very first note — renders the blank-slate intro. */
   firstNote?: boolean;
   unsubscribeToken: string;
@@ -65,11 +67,15 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     )
     .trim();
 
+  const salutation = `<p style="margin:0 0 15px;">Good morning${
+    args.greetingName ? `, ${args.greetingName}` : ""
+  },</p>`;
+
   const firstNoteAside = args.firstNote
     ? `<p style="margin:0 0 16px;font-style:italic;color:${BRAND.slate};">A quick word before we start: this is your first note, written before I really know you. Reply and tell me how you invest — anything at all — and every note from here adapts.</p>`
     : "";
 
-  const letter = `${firstNoteAside}${body}<p style="margin:22px 0 0;">— Your analyst</p>`;
+  const letter = `${salutation}${firstNoteAside}${body}<p style="margin:22px 0 0;">— Your analyst</p>`;
 
   return emailLayout(letter, {
     unsubscribeToken: args.unsubscribeToken,

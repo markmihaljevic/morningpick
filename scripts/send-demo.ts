@@ -22,6 +22,7 @@ import { renderMemoEmail } from "../lib/emails/memo-email";
 import { buildResearchLinks } from "../lib/research-links";
 import { getOrBuildBrief } from "../lib/research";
 import { getPortfolio } from "../lib/portfolio";
+import { greetingName } from "../lib/greeting";
 import { sendEmail, replyAddress } from "../lib/resend";
 
 const REPEAT_EXCLUSION_DAYS = 90; // match the worker
@@ -36,7 +37,7 @@ async function main() {
   const { data: subscriber, error } = await db()
     .from("subscribers")
     .select(
-      "id, email, unsubscribe_token, portal_token, plan, preference_profiles(structured, philosophy, version, screens, screens_version)",
+      "id, email, unsubscribe_token, portal_token, plan, first_name, preference_profiles(structured, philosophy, version, screens, screens_version)",
     )
     .eq("email", email)
     .single();
@@ -204,6 +205,7 @@ async function main() {
 
   const html = renderMemoEmail({
     markdown: memo.markdown,
+    greetingName: greetingName(subscriber.email, subscriber.first_name),
     unsubscribeToken: subscriber.unsubscribe_token,
     profileUrl: `https://morningpick.ai/profile/${subscriber.portal_token}`,
     preparedFor: subscriber.email,

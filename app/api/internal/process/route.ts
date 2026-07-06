@@ -13,6 +13,7 @@ import { extractPitchPrice } from "@/lib/performance";
 import { isDailyPlan } from "@/lib/billing";
 import { getOrBuildBrief } from "@/lib/research";
 import { getPortfolio } from "@/lib/portfolio";
+import { greetingName } from "@/lib/greeting";
 import {
   getCoverageContext,
   coverageForPrompt,
@@ -309,7 +310,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
   const { data: subscriber, error: subError } = await db()
     .from("subscribers")
     .select(
-      "id, email, status, unsubscribe_token, portal_token, plan, preference_profiles(structured, philosophy, version, screens, screens_version)",
+      "id, email, status, unsubscribe_token, portal_token, plan, first_name, preference_profiles(structured, philosophy, version, screens, screens_version)",
     )
     .eq("id", delivery.subscriber_id)
     .single();
@@ -454,6 +455,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     memoId = crypto.randomUUID();
     html = renderMemoEmail({
       markdown: memo.markdown,
+      greetingName: greetingName(subscriber.email, subscriber.first_name),
       firstNote,
       unsubscribeToken: subscriber.unsubscribe_token,
       billingUrl:
