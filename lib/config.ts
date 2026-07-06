@@ -37,6 +37,10 @@ const envSchema = z.object({
   // A covered name moving this % since its last note triggers a follow-up.
   FOLLOWUP_MOVE_PCT: z.coerce.number().positive().default(15),
 
+  // Attach the one-page tear-sheet PDF to daily notes. Off before a domain
+  // warm-up if attachments dent inbox placement at scale.
+  ATTACH_TEARSHEET: z.enum(["true", "false"]).default("true"),
+
   // Stripe (paid tier). All optional — billing routes no-op until configured.
   STRIPE_SECRET_KEY: z.string().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().default(""),

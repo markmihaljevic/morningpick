@@ -14,6 +14,7 @@ import { isDailyPlan } from "@/lib/billing";
 import { getOrBuildBrief } from "@/lib/research";
 import { getPortfolio } from "@/lib/portfolio";
 import { greetingName } from "@/lib/greeting";
+import { buildTearSheet } from "@/lib/tear-sheet";
 import {
   getCoverageContext,
   coverageForPrompt,
@@ -341,6 +342,9 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
   let html: string;
   let ticker = "";
   let title: string;
+  // The one-page tear sheet, attached to fresh notes (skipped on the rare
+  // crash-recovery reuse path, and on reviews which have no single ticker).
+  let tearSheet: Buffer | null = null;
   // Follow-up verdicts (stands/watching/closed) update the book after send.
   let metaForVerdict: { call_status?: string; close_reason?: string } | null = null;
   let quality: Record<string, unknown> | null = null;
@@ -487,6 +491,17 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       extras: { researchLinks, sources: memo.sources, meta: memo.meta, dateLine },
     });
     if (memoError) throw new Error(`Memo insert failed: ${memoError.message}`);
+
+    if (memoKind !== "review" && config().ATTACH_TEARSHEET === "true") {
+      tearSheet = await buildTearSheet({
+        ticker,
+        companyName,
+        dateLine,
+        preparedFor: subscriber.email,
+        data,
+        meta: memo.meta,
+      });
+    }
   }
 
   const resendId = await sendEmail({
@@ -495,6 +510,9 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     html,
     replyTo: replyAddress(memoId),
     unsubscribeToken: subscriber.unsubscribe_token,
+    attachments: tearSheet
+      ? [{ filename: `${ticker.replace(/[^A-Za-z0-9.\-]/g, "")}-tear-sheet.pdf`, content: tearSheet }]
+      : undefined,
   });
 
   await db()

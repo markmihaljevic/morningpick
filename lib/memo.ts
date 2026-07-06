@@ -276,6 +276,7 @@ export interface MemoMeta {
   conviction: number; // 1–10
   horizon: string; // e.g. "6–18 months"
   style_tags: string[]; // ≤3 short tags, e.g. ["Merger arb", "Net cash"]
+  scenarios?: { bear: string; base: string; bull: string }; // short lines pulled from the note
 }
 
 const META_SCHEMA = {
@@ -306,8 +307,20 @@ const META_SCHEMA = {
       items: { type: "string" },
       description: "Up to 3 two-word style tags, e.g. 'Deep value', 'Merger arb', 'Quality compounder'",
     },
+    scenarios: {
+      type: "object",
+      description:
+        "The bear/base/bull outcomes as the memo argues them — each a SHORT line with the number and the one assumption (e.g. 'to ~7p (-60%) if guidance slips and the multiple compresses'). Empty strings if the memo gives no explicit scenarios.",
+      properties: {
+        bear: { type: "string" },
+        base: { type: "string" },
+        bull: { type: "string" },
+      },
+      required: ["bear", "base", "bull"],
+      additionalProperties: false,
+    },
   },
-  required: ["one_liner", "conviction", "horizon", "style_tags", "call_status"],
+  required: ["one_liner", "conviction", "horizon", "style_tags", "call_status", "scenarios"],
   additionalProperties: false,
 } as const;
 
@@ -340,6 +353,14 @@ export async function extractMemoMeta(markdown: string): Promise<MemoMeta | null
       conviction: Math.min(10, Math.max(1, Math.round(parsed.conviction ?? 5))),
       horizon: (parsed.horizon ?? "").slice(0, 30),
       style_tags: (parsed.style_tags ?? []).slice(0, 3).map((t) => String(t).slice(0, 24)),
+      scenarios:
+        parsed.scenarios && (parsed.scenarios.bear || parsed.scenarios.base || parsed.scenarios.bull)
+          ? {
+              bear: (parsed.scenarios.bear ?? "").slice(0, 160),
+              base: (parsed.scenarios.base ?? "").slice(0, 160),
+              bull: (parsed.scenarios.bull ?? "").slice(0, 160),
+            }
+          : undefined,
     };
   } catch (e) {
     console.error("Memo meta extraction failed (non-fatal):", e);

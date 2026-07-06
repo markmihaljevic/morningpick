@@ -23,6 +23,7 @@ import { buildResearchLinks } from "../lib/research-links";
 import { getOrBuildBrief } from "../lib/research";
 import { getPortfolio } from "../lib/portfolio";
 import { greetingName } from "../lib/greeting";
+import { buildTearSheet } from "../lib/tear-sheet";
 import { sendEmail, replyAddress } from "../lib/resend";
 
 const REPEAT_EXCLUSION_DAYS = 90; // match the worker
@@ -217,12 +218,27 @@ async function main() {
     console.error(`HTML written to ${htmlPath}`);
   }
 
+  const tearSheet =
+    memoKind === "review"
+      ? null
+      : await buildTearSheet({
+          ticker,
+          companyName,
+          dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+          preparedFor: subscriber.email,
+          data,
+          meta: memo.meta,
+        });
+  console.error(`Tear sheet: ${tearSheet ? `${(tearSheet.length / 1024).toFixed(0)} KB` : "none"}`);
   const resendId = await sendEmail({
     to: subscriber.email,
     subject: `[demo] ${memo.title}`,
     html,
     replyTo: replyAddress(`demo-${crypto.randomUUID()}`),
     unsubscribeToken: subscriber.unsubscribe_token,
+    attachments: tearSheet
+      ? [{ filename: `${ticker.replace(/[^A-Za-z0-9.\-]/g, "")}-tear-sheet.pdf`, content: tearSheet }]
+      : undefined,
   });
   console.error(`Sent: ${resendId} → ${subscriber.email}`);
   console.log(memo.markdown);

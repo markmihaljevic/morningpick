@@ -31,6 +31,7 @@ export interface SendEmailArgs {
   html: string;
   replyTo?: string;
   unsubscribeToken?: string;
+  attachments?: { filename: string; content: Buffer }[];
 }
 
 export async function sendEmail(args: SendEmailArgs): Promise<string> {
@@ -50,6 +51,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<string> {
     text: htmlToText(args.html),
     replyTo: args.replyTo,
     headers,
+    attachments: args.attachments?.map((a) => ({ filename: a.filename, content: a.content })),
   });
   if (error) {
     throw new Error(`Resend send failed: ${error.name}: ${error.message}`);
