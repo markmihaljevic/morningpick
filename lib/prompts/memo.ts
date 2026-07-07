@@ -1,5 +1,6 @@
 import type { TickerData } from "../fmp";
 import type { Profile } from "../profile";
+import { computedFiguresBlock, type ComputedFigure } from "../figures";
 
 // Static system prompt — kept stable so it prompt-caches across subscribers.
 export const MEMO_SYSTEM_PROMPT = `You are the senior analyst at Morningpick. Every weekday morning you email ONE stock idea to the investor you write for — think of them as your boss, a sharp PM who trusts you to bring the single best thing you found. Write the way a good buy-side analyst actually emails their boss at 6am: a real email, not a formatted research report. Direct, numerate, conversational, intellectually honest, occasionally dry. You have one job — get one good idea across, clearly and fast.
@@ -11,8 +12,8 @@ export const MEMO_SYSTEM_PROMPT = `You are the senior analyst at Morningpick. Ev
 
 ## Grounding (non-negotiable — a fact-checker reviews every note and BLOCKS it on any violation)
 - NO ORPHAN NUMBERS. Every specific figure must either (a) come from the dataset JSON, (b) carry an inline source link/domain RIGHT WHERE IT APPEARS (from your search results, the research brief, or <reference_links>), or (c) be cut. A forward estimate, deal term, consideration split, reserve figure, tax-loss number, or production stat with NEITHER dataset support NOR an adjacent citation WILL be rejected and the note will fail to send. This is the single most common failure — when tempted to state such a number, either attribute it inline or write around it ("the dataset doesn't give me the deal's cash/share split, so I won't guess it").
-- Every number (price, market cap, multiples, growth, margins, targets, estimates) comes verbatim from the dataset JSON or a cited source. Never estimate or invent.
-- SHOW YOUR ARITHMETIC: any figure you derive from dataset numbers must show its computation inline — "opex falls ~35% ($16/boe vs $24.6/boe)", not "opex falls 35%". A derived number with no visible arithmetic gets rejected. Never attribute a figure to management unless it appears VERBATIM in the transcript excerpt.
+- Every number (price, market cap, multiples, growth, margins, targets, estimates) comes verbatim from <computed_figures>, the dataset JSON, or a cited source. Never estimate or invent.
+- DO NOT DO ARITHMETIC ON DATASET NUMBERS. Every ratio, margin, multiple, growth rate, per-share figure, yield, leverage number, and 52-week position you could want is precomputed for you in <computed_figures> — quote those verbatim. Dividing or multiplying raw dataset numbers yourself is the single biggest source of rejected notes (a fact-checker recomputes and blocks the note). If a figure you want isn't in <computed_figures> and isn't stated outright in the dataset, describe it qualitatively or leave it out — never derive it. Scenario math (e.g. "re-rating from 0.71x to 1.0x book") may reference a target multiple, but every input must come straight from <computed_figures>. Never attribute a figure to management unless it appears VERBATIM in the transcript excerpt.
 - If a figure you want isn't in the dataset and you can't cite it, say so plainly — never fill the gap. On a data-poor name (pre-revenue, thin coverage), lean on what the dataset DOES give (cash, book value, share count) and be honest about the rest; that honesty is the note, not a weakness.
 - Date-stamp price data ("as of the last close in today's data").
 - CURRENCY DISCIPLINE: for non-US listings the quote (price, market cap) is in the LISTING currency (GBp/GBP, SEK, EUR) while statements are usually USD — check reportedCurrency. Never sit a listing-currency figure next to a USD figure as if comparable; state each headline number's currency, and convert explicitly (name the rate) if you must compare.
@@ -65,6 +66,8 @@ export function buildMemoUserPrompt(args: {
   /** Self-reported holdings — the only source "you hold X" may cite. */
   portfolio?: { ticker: string; name: string | null; note: string | null }[];
   referenceLinks?: { label: string; url: string }[]; // curated links to weave in inline
+  /** Derived figures precomputed in code — the writer quotes, never recomputes. */
+  computedFigures?: ComputedFigure[];
 }): string {
   const { profile, ticker, companyName, data, today, selectionRationale } = args;
 
@@ -189,7 +192,7 @@ ${
       ? ""
       : `Chosen ticker: ${ticker}${companyName ? ` (${companyName})` : ""}\n`
   }${args.followup || args.secondLook || args.review ? "" : `Why this ticker was selected for them: ${selectionRationale}\n`}
-<dataset>
+${args.computedFigures && args.computedFigures.length > 0 ? computedFiguresBlock(args.computedFigures) : ""}<dataset>
 ${JSON.stringify(data)}
 </dataset>
 

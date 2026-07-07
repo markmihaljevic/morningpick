@@ -11,6 +11,7 @@ import {
   type ReviewContext,
 } from "./prompts/memo";
 import { verifyMemo, type VerificationResult } from "./verify";
+import { buildComputedFigures } from "./figures";
 import { editMemo } from "./editor";
 import type { ResearchBrief } from "./research";
 
@@ -76,6 +77,7 @@ export async function generateMemo(args: {
     researchBrief: args.researchBrief,
     portfolio: args.portfolio,
     referenceLinks: args.referenceLinks,
+    computedFigures: args.review ? undefined : buildComputedFigures(args.data),
   });
 
   const baseRequest = {
@@ -391,10 +393,12 @@ export async function generateVerifiedMemo(args: {
   light?: boolean;
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   const MAX_REGENS = args.light ? 1 : 2;
+  // The same precomputed figures the writer quotes — ground truth for the check.
+  const figures = args.review ? [] : buildComputedFigures(args.data);
   let memo = await generateMemo(args);
   // The attribution check should recognize brief-sourced claims as sourced.
   const verifySources = args.researchBrief ? args.researchBrief.sources : memo.sources;
-  let verification = await verifyMemo(memo.markdown, args.data, verifySources);
+  let verification = await verifyMemo(memo.markdown, args.data, verifySources, figures);
   const priorIssues: { claim: string; problem: string }[] = [];
   for (let regen = 0; !verification.passed && regen < MAX_REGENS; regen++) {
     priorIssues.push(...verification.critical_issues);
@@ -411,7 +415,7 @@ export async function generateVerifiedMemo(args: {
           .map((i) => `- "${i.claim}": ${i.problem}`)
           .join("\n")}`,
     });
-    verification = await verifyMemo(memo.markdown, args.data, verifySources);
+    verification = await verifyMemo(memo.markdown, args.data, verifySources, figures);
   }
   if (!verification.passed) {
     throw new Error(
