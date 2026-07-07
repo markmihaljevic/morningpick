@@ -41,6 +41,9 @@ const envSchema = z.object({
   // warm-up if attachments dent inbox placement at scale.
   ATTACH_TEARSHEET: z.enum(["true", "false"]).default("true"),
 
+  // The analyst persona's first name — greets and signs every note, same daily.
+  ANALYST_NAME: z.string().default("Sam"),
+
   // Stripe (paid tier). All optional — billing routes no-op until configured.
   STRIPE_SECRET_KEY: z.string().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().default(""),

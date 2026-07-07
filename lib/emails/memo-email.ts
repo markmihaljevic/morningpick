@@ -1,16 +1,12 @@
-import { marked } from "marked";
-import { emailLayout } from "./layout";
-import type { MemoSource, MemoMeta } from "../memo";
-import type { KeyStat } from "../stats";
-import type { StreetItem } from "../street";
-import type { PrimarySource } from "../enrich-sources";
-import type { CompsRow } from "../comps";
-import type { BookRow } from "../coverage";
+import { emailLayout, escapeHtml } from "./layout";
 
 export interface MemoEmailArgs {
-  markdown: string;
+  /** The cover note prose — plain text, blank-line-separated paragraphs. */
+  coverNote: string;
   /** First name for the salutation — "Good morning, Mark,". Null → "Good morning,". */
   greetingName?: string | null;
+  /** The analyst persona's first name — signs every note, the same each day. */
+  signOffName: string;
   /** True for a subscriber's very first note — renders the blank-slate intro. */
   firstNote?: boolean;
   unsubscribeToken: string;
@@ -19,41 +15,25 @@ export interface MemoEmailArgs {
   profileUrl?: string;
   preparedFor?: string;
   dateLine?: string;
-  // Retained for callers/record-keeping; no longer rendered. The email is a
-  // plain letter now — the numbers live in the prose, not in attached tables.
-  stats?: KeyStat[];
-  street?: StreetItem[];
-  meta?: MemoMeta | null;
-  primarySources?: PrimarySource[];
-  chartUrl?: string | null;
-  comps?: CompsRow[];
-  book?: BookRow[];
-  sources?: MemoSource[];
-  pdfUrl?: string | null;
 }
 
 /**
- * The morning note as a plain letter: an analyst emailing his boss one idea.
- * Just prose — greeting, the argument in flowing paragraphs, a sign-off.
- * No tables, no charts, no verdict chrome; that scaffolding is what made it
- * read like a website and break on phones. The writing carries everything.
+ * The morning email as a short cover note from a human analyst. Just the
+ * greeting, a 120-180 word note in plain paragraphs, and a first-name sign-off.
+ * The full argument, the arithmetic, and the sources ride along as attached
+ * PDFs — this reads like a normal email a person typed, nothing more.
  */
 export function renderMemoEmail(args: MemoEmailArgs): string {
-  const html = marked.parse(args.markdown, { async: false }) as string;
-
-  // Drop the H1 (the subject line already carries the ticker + hook) and keep
-  // the styling to what a plain email needs: paragraphs, bold, blue links.
-  // No brand fonts or colors — it should read like a normal typed email.
-  const body = html
-    .replace(/<h1>[\s\S]*?<\/h1>/, "")
-    .replace(/<h2>([\s\S]*?)<\/h2>/g, (_, inner: string) => `<p style="margin:18px 0 4px;"><b>${inner}</b></p>`)
-    .replace(/<h3>([\s\S]*?)<\/h3>/g, (_, inner: string) => `<p style="margin:16px 0 4px;"><b>${inner}</b></p>`)
-    .replace(/<p>/g, '<p style="margin:0 0 14px;">')
-    .replace(/<ol>/g, '<ol style="margin:0 0 14px;padding-left:22px;">')
-    .replace(/<ul>/g, '<ul style="margin:0 0 14px;padding-left:22px;">')
-    .replace(/<li>/g, '<li style="margin:0 0 6px;">')
-    .replace(/<a href=/g, `<a style="color:#1155cc;" href=`)
-    .trim();
+  // The cover note is plain prose (no markdown, no links by design). Escape it
+  // and split blank-line-separated paragraphs — never trust it as HTML.
+  const paragraphs = args.coverNote
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map(
+      (p) => `<p style="margin:0 0 14px;">${escapeHtml(p).replace(/\n/g, "<br>")}</p>`,
+    )
+    .join("\n");
 
   const salutation = `<p style="margin:0 0 14px;">Good morning${
     args.greetingName ? `, ${args.greetingName}` : ""
@@ -63,7 +43,9 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     ? `<p style="margin:0 0 14px;color:#5f6368;">(A quick word before we start — this is your first note, written before I really know you. Just reply and tell me how you invest, and every note from here adapts.)</p>`
     : "";
 
-  const letter = `${salutation}${firstNoteAside}${body}<p style="margin:22px 0 0;">— Your analyst</p>`;
+  const signOff = `<p style="margin:22px 0 0;">— ${escapeHtml(args.signOffName)}</p>`;
+
+  const letter = `${salutation}${firstNoteAside}${paragraphs}${signOff}`;
 
   return emailLayout(letter, {
     unsubscribeToken: args.unsubscribeToken,

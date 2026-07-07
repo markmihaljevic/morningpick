@@ -41,6 +41,10 @@ export function emailLayout(bodyHtml: string, args: LayoutArgs): string {
 
   return `<!DOCTYPE html>
 <html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
 <body style="margin:0;padding:0;background-color:#ffffff;">
 <div style="max-width:600px;margin:0;padding:16px 18px 28px;font-family:${SANS};font-size:15px;line-height:1.5;color:${TEXT};">
 

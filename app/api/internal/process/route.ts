@@ -15,6 +15,8 @@ import { getOrBuildBrief } from "@/lib/research";
 import { getPortfolio } from "@/lib/portfolio";
 import { greetingName } from "@/lib/greeting";
 import { buildTearSheet } from "@/lib/tear-sheet";
+import { buildFullReport } from "@/lib/full-report";
+import { writeCoverNote, bareTicker } from "@/lib/cover-note";
 import {
   getCoverageContext,
   coverageForPrompt,
@@ -29,6 +31,19 @@ export const runtime = "nodejs";
 export const maxDuration = 800;
 
 const MAX_HOPS = 300;
+
+/** The email's attachments: the one-page fact sheet, then the full report. */
+function buildAttachments(
+  ticker: string,
+  tearSheet: Buffer | null,
+  fullReport: Buffer | null,
+): { filename: string; content: Buffer }[] | undefined {
+  const bare = bareTicker(ticker);
+  const out: { filename: string; content: Buffer }[] = [];
+  if (tearSheet) out.push({ filename: `${bare}-one-pager.pdf`, content: tearSheet });
+  if (fullReport) out.push({ filename: `${bare}-full-report.pdf`, content: fullReport });
+  return out.length > 0 ? out : undefined;
+}
 // Don't start a new memo unless at least this much runtime remains.
 const REPEAT_EXCLUSION_DAYS = 90;
 
@@ -342,9 +357,11 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
   let html: string;
   let ticker = "";
   let title: string;
-  // The one-page tear sheet, attached to fresh notes (skipped on the rare
-  // crash-recovery reuse path, and on reviews which have no single ticker).
+  // The attachments that carry the argument: a one-page fact sheet and the
+  // full written report. Skipped on the rare crash-recovery reuse path, and on
+  // reviews which have no single ticker.
   let tearSheet: Buffer | null = null;
+  let fullReport: Buffer | null = null;
   // Follow-up verdicts (stands/watching/closed) update the book after send.
   let metaForVerdict: { call_status?: string; close_reason?: string } | null = null;
   let quality: Record<string, unknown> | null = null;
@@ -387,7 +404,6 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     const reviewContext = plan.reviewContext;
     const referenceLinks = plan.referenceLinks;
     const researchLinks = plan.researchLinks;
-    const primarySources = plan.primarySources;
     const coverage = plan.coverage;
     const firstNote = plan.firstNote;
     const recentProfileChange = plan.recentProfileChange;
@@ -400,9 +416,6 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
             upcomingEarnings: reviewContext.upcomingEarnings,
           } as unknown as TickerData)
         : await fetchTickerData(ticker);
-    const companyProfile = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
-      | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
-      | undefined;
 
 
     // Research once, write per subscriber: acquire the day's shared fact
@@ -435,7 +448,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       referenceLinks,
       light: lightMode,
     });
-    title = memo.title;
+    const h1Title = memo.title; // "TICKER — hook" — the attached report's title
     if (memoKind === "followup") metaForVerdict = memo.meta;
     quality = {
       kind: memoKind,
@@ -456,10 +469,22 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       timeZone: "UTC",
     });
 
+    // The email is now a short cover note distilled from the verified full
+    // note; the full argument ships attached. Fail-open to a clean subject +
+    // one-liner if the distillation call errors.
+    const cover = await writeCoverNote({ fullNoteMarkdown: memo.markdown, ticker, meta: memo.meta });
+    const hook = h1Title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
+    const coverSubject = cover?.subject || `${bareTicker(ticker)}: ${hook || "today's idea"}`;
+    const coverBody =
+      cover?.body ||
+      `${memo.meta?.one_liner ?? "My latest idea for you."}\n\nThe full write-up and a one-page fact sheet are attached — the complete argument, the numbers, and the sources are all in there.`;
+    title = coverSubject; // the DB title + email subject = what the reader saw
+
     memoId = crypto.randomUUID();
     html = renderMemoEmail({
-      markdown: memo.markdown,
+      coverNote: coverBody,
       greetingName: greetingName(subscriber.email, subscriber.first_name),
+      signOffName: config().ANALYST_NAME,
       firstNote,
       unsubscribeToken: subscriber.unsubscribe_token,
       billingUrl:
@@ -493,14 +518,18 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     if (memoError) throw new Error(`Memo insert failed: ${memoError.message}`);
 
     if (memoKind !== "review" && config().ATTACH_TEARSHEET === "true") {
-      tearSheet = await buildTearSheet({
-        ticker,
-        companyName,
-        dateLine,
-        preparedFor: subscriber.email,
-        data,
-        meta: memo.meta,
-      });
+      [tearSheet, fullReport] = await Promise.all([
+        buildTearSheet({ ticker, companyName, dateLine, preparedFor: subscriber.email, data, meta: memo.meta }),
+        buildFullReport({
+          markdown: memo.markdown,
+          ticker,
+          companyName,
+          dateLine,
+          data,
+          meta: memo.meta,
+          sources: memo.sources,
+        }),
+      ]);
     }
   }
 
@@ -510,9 +539,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     html,
     replyTo: replyAddress(memoId),
     unsubscribeToken: subscriber.unsubscribe_token,
-    attachments: tearSheet
-      ? [{ filename: `${ticker.replace(/[^A-Za-z0-9.\-]/g, "")}-tear-sheet.pdf`, content: tearSheet }]
-      : undefined,
+    attachments: buildAttachments(ticker, tearSheet, fullReport),
   });
 
   await db()

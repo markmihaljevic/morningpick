@@ -17,7 +17,7 @@ export function renderUpgradeNudgeEmail(args: {
     <p style="margin:0 0 14px;color:#5f6368;">&gt; ${escape(args.firstQuestion)}</p>
     <p style="margin:0 0 14px;">You're on the free Monday note. The daily desk is the full thing: a fresh research note every weekday morning, researched answers to your replies (like this one), and follow-ups when a covered name moves or reports.</p>
     <p style="margin:0 0 14px;"><a href="${upgradeUrl}" style="color:#1155cc;">Join the daily desk — $99/mo</a>. MOI Global member? Use your member email and the partner rate applies automatically.</p>
-    <p style="margin:14px 0 0;">— Your analyst</p>
+    <p style="margin:14px 0 0;">— ${cfg.ANALYST_NAME}</p>
   `;
   return emailLayout(body, { unsubscribeToken: args.unsubscribeToken });
 }

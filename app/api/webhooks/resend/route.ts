@@ -176,7 +176,9 @@ async function handleInbound(event: ResendEvent): Promise<NextResponse> {
     if (bySubject) {
       memoId = bySubject.id;
     } else {
-      const ticker = subjectTitle.match(/^([A-Z0-9]{1,6}(?:[.\-][A-Z0-9]{1,4}){0,2})\s+—/)?.[1];
+      // Subjects now read "TICKER: hook" (bare ticker); older/demo notes used
+      // "TICKER.L — hook". Accept either separator.
+      const ticker = subjectTitle.match(/^([A-Z0-9]{1,6}(?:[.\-][A-Z0-9]{1,4}){0,2})\s*[—:]/)?.[1];
       if (ticker) subjectContext = { ticker, title: subjectTitle };
     }
   }

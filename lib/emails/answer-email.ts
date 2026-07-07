@@ -1,5 +1,6 @@
 import { marked } from "marked";
 import { emailLayout, escapeHtml } from "./layout";
+import { config } from "../config";
 
 export interface AnswerEmailArgs {
   answerMarkdown: string;
@@ -35,7 +36,7 @@ export function renderAnswerEmail(args: AnswerEmailArgs): string {
         ? `<p style="margin:18px 0 0;color:#5f6368;">(Also noted: ${escapeHtml(args.feedbackLine)} — that goes into how I pick for you from here.)</p>`
         : ""
     }
-    <p style="margin:18px 0 0;">— Your analyst</p>`;
+    <p style="margin:18px 0 0;">— ${config().ANALYST_NAME}</p>`;
 
   return emailLayout(body, { unsubscribeToken: args.unsubscribeToken, profileUrl: args.profileUrl });
 }

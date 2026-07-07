@@ -24,6 +24,9 @@ import { getOrBuildBrief } from "../lib/research";
 import { getPortfolio } from "../lib/portfolio";
 import { greetingName } from "../lib/greeting";
 import { buildTearSheet } from "../lib/tear-sheet";
+import { buildFullReport } from "../lib/full-report";
+import { writeCoverNote, bareTicker } from "../lib/cover-note";
+import { config } from "../lib/config";
 import { sendEmail, replyAddress } from "../lib/resend";
 
 const REPEAT_EXCLUSION_DAYS = 90; // match the worker
@@ -204,13 +207,25 @@ async function main() {
     `Verification: ${memo.verification.critical_issues.length} critical, ${memo.verification.minor_issues.length} minor issues`,
   );
 
+  const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+
+  // Distil the verified note into the short cover email; the full argument ships attached.
+  const cover = await writeCoverNote({ fullNoteMarkdown: memo.markdown, ticker, meta: memo.meta });
+  const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
+  const coverSubject = cover?.subject || `${bareTicker(ticker)}: ${hook || "today's idea"}`;
+  const coverBody =
+    cover?.body ||
+    `${memo.meta?.one_liner ?? "My latest idea for you."}\n\nThe full write-up and a one-page fact sheet are attached — the complete argument, the numbers, and the sources are all in there.`;
+  console.error(`Cover note: ${cover ? `${cover.body.split(/\s+/).length} words` : "FALLBACK"} — subject "${coverSubject}"`);
+
   const html = renderMemoEmail({
-    markdown: memo.markdown,
+    coverNote: coverBody,
     greetingName: greetingName(subscriber.email, subscriber.first_name),
+    signOffName: config().ANALYST_NAME,
     unsubscribeToken: subscriber.unsubscribe_token,
     profileUrl: `https://morningpick.ai/profile/${subscriber.portal_token}`,
     preparedFor: subscriber.email,
-    dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+    dateLine,
   });
   const htmlPath = process.env.DEMO_HTML_OUT;
   if (htmlPath) {
@@ -218,27 +233,29 @@ async function main() {
     console.error(`HTML written to ${htmlPath}`);
   }
 
-  const tearSheet =
+  const [tearSheet, fullReport] =
     memoKind === "review"
-      ? null
-      : await buildTearSheet({
-          ticker,
-          companyName,
-          dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
-          preparedFor: subscriber.email,
-          data,
-          meta: memo.meta,
-        });
-  console.error(`Tear sheet: ${tearSheet ? `${(tearSheet.length / 1024).toFixed(0)} KB` : "none"}`);
+      ? [null, null]
+      : await Promise.all([
+          buildTearSheet({ ticker, companyName, dateLine, preparedFor: subscriber.email, data, meta: memo.meta }),
+          buildFullReport({ markdown: memo.markdown, ticker, companyName, dateLine, data, meta: memo.meta, sources: memo.sources }),
+        ]);
+  console.error(
+    `Attachments: one-pager ${tearSheet ? `${(tearSheet.length / 1024).toFixed(0)} KB` : "none"}, ` +
+      `full report ${fullReport ? `${(fullReport.length / 1024).toFixed(0)} KB` : "none"}`,
+  );
+  const bare = bareTicker(ticker);
+  const attachments: { filename: string; content: Buffer }[] = [];
+  if (tearSheet) attachments.push({ filename: `${bare}-one-pager.pdf`, content: tearSheet });
+  if (fullReport) attachments.push({ filename: `${bare}-full-report.pdf`, content: fullReport });
+
   const resendId = await sendEmail({
     to: subscriber.email,
-    subject: `[demo] ${memo.title}`,
+    subject: `[demo] ${coverSubject}`,
     html,
     replyTo: replyAddress(`demo-${crypto.randomUUID()}`),
     unsubscribeToken: subscriber.unsubscribe_token,
-    attachments: tearSheet
-      ? [{ filename: `${ticker.replace(/[^A-Za-z0-9.\-]/g, "")}-tear-sheet.pdf`, content: tearSheet }]
-      : undefined,
+    attachments: attachments.length > 0 ? attachments : undefined,
   });
   console.error(`Sent: ${resendId} → ${subscriber.email}`);
   console.log(memo.markdown);

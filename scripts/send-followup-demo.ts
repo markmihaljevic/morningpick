@@ -14,9 +14,11 @@ import { getCoverageContext, coverageForPrompt, checkFollowupTrigger } from "../
 import { fetchTickerData } from "../lib/fmp";
 import { generateVerifiedMemo } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
+import { writeCoverNote, bareTicker } from "../lib/cover-note";
+import { buildTearSheet } from "../lib/tear-sheet";
+import { buildFullReport } from "../lib/full-report";
+import { config } from "../lib/config";
 import { sendEmail, replyAddress } from "../lib/resend";
-import { buildKeyStats } from "../lib/stats";
-import { buildStreetItems } from "../lib/street";
 
 async function main() {
   const email = process.argv[2];
@@ -78,22 +80,36 @@ async function main() {
     },
   });
 
+  const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  const cover = await writeCoverNote({ fullNoteMarkdown: memo.markdown, ticker: target.ticker, meta: memo.meta });
+  const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
+  const coverSubject = cover?.subject || `${bareTicker(target.ticker)}: ${hook || "an update"}`;
+  const coverBody =
+    cover?.body ||
+    `${memo.meta?.one_liner ?? "An update on a name I flagged for you."}\n\nThe full write-up and a one-page fact sheet are attached.`;
+
   const html = renderMemoEmail({
-    markdown: memo.markdown,
+    coverNote: coverBody,
+    signOffName: config().ANALYST_NAME,
     unsubscribeToken: subscriber.unsubscribe_token,
     preparedFor: subscriber.email,
-    dateLine: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
-    stats: buildKeyStats(data),
-    street: buildStreetItems(data),
-    meta: memo.meta,
-    sources: memo.sources,
+    dateLine,
   });
+  const [tearSheet, fullReport] = await Promise.all([
+    buildTearSheet({ ticker: target.ticker, companyName: original?.company_name ?? undefined, dateLine, preparedFor: subscriber.email, data, meta: memo.meta }),
+    buildFullReport({ markdown: memo.markdown, ticker: target.ticker, companyName: original?.company_name ?? undefined, dateLine, data, meta: memo.meta, sources: memo.sources }),
+  ]);
+  const bare = bareTicker(target.ticker);
+  const attachments: { filename: string; content: Buffer }[] = [];
+  if (tearSheet) attachments.push({ filename: `${bare}-one-pager.pdf`, content: tearSheet });
+  if (fullReport) attachments.push({ filename: `${bare}-full-report.pdf`, content: fullReport });
   const id = await sendEmail({
     to: subscriber.email,
-    subject: `[demo] ${memo.title}`,
+    subject: `[demo] ${coverSubject}`,
     html,
     replyTo: replyAddress(target.memoId),
     unsubscribeToken: subscriber.unsubscribe_token,
+    attachments: attachments.length > 0 ? attachments : undefined,
   });
   console.error(`Sent: ${id}`);
   console.log(memo.markdown.slice(0, 1500));
