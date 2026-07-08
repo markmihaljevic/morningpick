@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/factors",
+      "schedule": "0 4 * * *"
+    },
+    {
       "path": "/api/cron/dispatch",
       "schedule": "30 4 * * *"
     },

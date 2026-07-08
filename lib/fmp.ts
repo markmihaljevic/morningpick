@@ -337,16 +337,17 @@ export async function fetchPeerComps(ticker: string, maxPeers = 4): Promise<Peer
           ps: null,
         };
         try {
-          const ratios = await fmpGet<Record<string, unknown>[]>("ratios", {
+          // TTM, not annual: annual ratios are stamped at fiscal-year-end
+          // prices and go stale the day after — TTM is refreshed daily.
+          const ratios = await fmpGet<Record<string, unknown>[]>("ratios-ttm", {
             symbol: p.symbol!,
-            limit: 1,
           });
           const r = ratios?.[0] ?? {};
           const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-          base.pe = num(r.priceToEarningsRatio);
-          base.pb = num(r.priceToBookRatio);
-          base.evEbitda = num(r.enterpriseValueMultiple);
-          base.ps = num(r.priceToSalesRatio);
+          base.pe = num(r.priceToEarningsRatioTTM);
+          base.pb = num(r.priceToBookRatioTTM);
+          base.evEbitda = num(r.enterpriseValueMultipleTTM);
+          base.ps = num(r.priceToSalesRatioTTM);
         } catch {
           /* peer stays with price/mcap only */
         }
@@ -365,6 +366,12 @@ export interface TickerData {
   quote: unknown;
   keyMetrics: unknown;
   ratios: unknown; // 10 fiscal years, newest first — the company's own multiple history
+  // TTM vintages — refreshed daily by FMP, unlike the annual rows above which
+  // are stamped at fiscal-year-end PRICES (the CJ.TO stale-yield bug). All
+  // headline price-dependent figures are recomputed from these at the day's
+  // close in lib/figures.ts; the annual rows remain for history/trend only.
+  ratiosTTM: unknown;
+  keyMetricsTTM: unknown;
   incomeStatement: unknown;
   insiderTrades: InsiderTrade[];
   street: StreetData;
@@ -372,10 +379,10 @@ export interface TickerData {
   peers: PeerComp[];
 }
 
-/** Fetch the grounding dataset for one ticker (~12 FMP requests, cached per day). */
+/** Fetch the grounding dataset for one ticker (~14 FMP requests, cached per day). */
 export async function fetchTickerData(ticker: string): Promise<TickerData> {
   const symbol = { symbol: ticker };
-  const [profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street, latestTranscript, peers] =
+  const [profile, quote, keyMetrics, ratios, ratiosTTM, keyMetricsTTM, incomeStatement, insiderTrades, street, latestTranscript, peers] =
     await Promise.all([
       fmpGet("profile", symbol),
       fmpGet("quote", symbol),
@@ -383,11 +390,13 @@ export async function fetchTickerData(ticker: string): Promise<TickerData> {
       // 10 years, not 1: the company's own multiple/margin history is the
       // cheapest possible "is this actually cheap FOR THIS COMPANY" evidence.
       fmpGet("ratios", { ...symbol, limit: 10 }),
+      fmpGet("ratios-ttm", symbol),
+      fmpGet("key-metrics-ttm", symbol),
       fmpGet("income-statement", { ...symbol, limit: 2 }),
       fetchInsiderTrades(ticker),
       fetchStreetData(ticker),
       fetchLatestTranscript(ticker),
       fetchPeerComps(ticker),
     ]);
-  return { profile, quote, keyMetrics, ratios, incomeStatement, insiderTrades, street, latestTranscript, peers };
+  return { profile, quote, keyMetrics, ratios, ratiosTTM, keyMetricsTTM, incomeStatement, insiderTrades, street, latestTranscript, peers };
 }

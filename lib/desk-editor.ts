@@ -46,16 +46,24 @@ export async function decideNote(args: {
 }
 
 /**
- * When both idea candidates fail pre-flight: still send an idea. An analyst
- * on a quiet morning sends the most interesting thing they found and says
- * plainly that it's a quieter day — they don't go silent or change the job.
+ * When every candidate fails the conviction gate: NEVER lead the morning with
+ * a name the analyst wouldn't put money behind. With a book to steward, the
+ * morning becomes a coverage review — marking open calls to market IS the
+ * work on a weak-tape day. Only a brand-new subscriber with no book gets the
+ * best available idea, framed honestly as a quieter morning.
  */
 export async function fallbackNote(args: {
   coverageItems: CoverageItem[];
   reason: string;
 }): Promise<DeskDecision> {
+  if (args.coverageItems.length > 0) {
+    return {
+      kind: "review",
+      reason: `${args.reason} — no fresh candidate cleared the conviction gate today; steward the book instead of pitching a name the desk wouldn't back.`,
+    };
+  }
   return {
     kind: "idea",
-    reason: `${args.reason} — no candidate cleared the bar cleanly today; write the best available one with honest, measured conviction (say plainly if it's a quieter morning).`,
+    reason: `${args.reason} — no candidate cleared the bar cleanly and there is no book to review yet; write the best available one with honest, measured conviction (say plainly it's a quieter morning).`,
   };
 }

@@ -1,28 +1,28 @@
-import { db } from "./db";
+import { db, logEvent } from "./db";
 import type { Profile } from "./profile";
 import { getSubscriberScreens, buildCandidatePool, type ScreenParams } from "./screens";
-import {
-  shortlistCandidates,
-  enrichShortlist,
-  finalSelect,
-  type Taste,
-  type WatchlistEntry,
-} from "./selection";
-import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "./fmp";
+import type { Taste, WatchlistEntry } from "./selection";
+import { ensureFactorTable, loadFactorRows } from "./factor-table";
+import { scoreCandidates, deriveWeights } from "./scoring";
+import { pickFromRanked } from "./pick";
+import { fetchTickerData, fetchUpcomingEarnings, type TickerData } from "./fmp";
 import { preflightCheck, type PreflightResult } from "./preflight";
 
 const WATCHLIST_MAX_AGE_DAYS = 45;
 
 /**
- * The idea funnel with the pre-flight veto: screens → pool → shortlist →
- * enrichment → pick → FULL dataset → head-of-research check. If the pick
- * looks weak with real numbers on the desk, one more candidate gets the same
- * treatment. `ok: false` means both attempts failed pre-flight — the caller
- * decides whether to steward the book instead or ship the best attempt with
- * honest conviction.
+ * The idea funnel: screen (exclude) → score (rank in code, no LLM) → pick
+ * (small LLM step over the top of the ranked list) → FULL dataset →
+ * head-of-research check with a CONVICTION GATE. A name that pre-flights
+ * below the gate never leads the morning: the funnel walks DOWN the ranked
+ * list to the next name instead. `ok: false` means the top of the ranked
+ * list is genuinely weak today — the caller stewards the book rather than
+ * shipping a name the analyst wouldn't put money behind.
  */
 
-const MAX_PREFLIGHT_ATTEMPTS = 2;
+const MAX_PREFLIGHT_ATTEMPTS = 4;
+const MIN_CONVICTION = 6;
+const RANKED_FOR_PICK = 20;
 
 export interface IdeaAttempt {
   ticker: string;
@@ -62,7 +62,6 @@ export async function selectIdeaWithPreflight(args: {
     args.storedScreensVersion,
   );
   const pool = await buildCandidatePool(screens);
-  const recent = args.recentTickers.map((t) => ({ ticker: t }));
 
   // The pipeline: names flagged on earlier mornings rejoin today's hunt.
   const { data: watchRows } = await db()
@@ -79,85 +78,123 @@ export async function selectIdeaWithPreflight(args: {
     nextCatalystDate: w.next_catalyst_date,
   }));
 
-  const shortlist = await shortlistCandidates(
-    args.profile,
-    pool,
-    args.excluded,
-    recent,
-    args.taste,
-    watchlist,
-  );
-  const [enriched, headlines, upcomingEarnings] = await Promise.all([
-    enrichShortlist(shortlist),
-    fetchHeadlines(shortlist.map((c) => c.ticker)),
-    fetchUpcomingEarnings(shortlist.map((c) => c.ticker)),
-  ]);
+  // Screening excluded; now the SCORER ranks. Exclusions: recent coverage +
+  // profile avoid-list, applied before scoring so percentiles reflect the
+  // universe the subscriber can actually be pitched.
+  const excluded = new Set(args.excluded.map((t) => t.toUpperCase()));
+  const avoid = Array.isArray(args.profile.structured?.avoid_tickers)
+    ? (args.profile.structured.avoid_tickers as string[]).map((t) => t.toUpperCase())
+    : [];
+  for (const t of avoid) excluded.add(t);
+  const eligible = pool.filter((c) => !excluded.has(c.ticker.toUpperCase()));
+  if (eligible.length === 0) throw new Error("No eligible candidates after exclusions.");
+  // Watchlist names keep their seat even when today's screens rotated past
+  // them (they'll be quarantined harmlessly if factor data is missing).
+  const inPool = new Set(eligible.map((c) => c.ticker.toUpperCase()));
+  for (const w of watchlist) {
+    const t = w.ticker.toUpperCase();
+    if (!inPool.has(t) && !excluded.has(t)) {
+      eligible.push({ ticker: w.ticker, name: w.name ?? w.ticker, source: "watchlist" });
+    }
+  }
+
+  // Score: pure code over the shared factor table. Zero tokens.
+  await ensureFactorTable();
+  const factorRows = await loadFactorRows(eligible.map((c) => c.ticker));
+  const weights = deriveWeights(args.profile);
+  const { ranked, quarantined } = scoreCandidates(eligible, factorRows, weights);
+  if (ranked.length === 0) {
+    throw new Error(
+      `Scoring left no rankable candidates (pool ${pool.length}, eligible ${eligible.length}, quarantined ${quarantined.length}).`,
+    );
+  }
+  await logEvent("scoring_ran", {
+    subscriberId: args.subscriberId,
+    payload: {
+      pool: pool.length,
+      eligible: eligible.length,
+      ranked: ranked.length,
+      quarantined: quarantined.length,
+      weights,
+      top5: ranked.slice(0, 5).map((c) => ({ t: c.ticker, s: Math.round(c.composite) })),
+    },
+  });
+
+  const top = ranked.slice(0, RANKED_FOR_PICK);
+  const upcomingEarnings = await fetchUpcomingEarnings(top.map((c) => c.ticker));
   const sectorByTicker = new Map(pool.map((c) => [c.ticker.toUpperCase(), c.sector]));
   const recentWithSectors = args.recentTickers.map((t) => ({
     ticker: t,
     sector: sectorByTicker.get(t.toUpperCase()) ?? undefined,
   }));
 
+  // Pick: the one small LLM step — judgment over the top of the ranked list.
+  const pick = await pickFromRanked({
+    profile: args.profile,
+    ranked: top,
+    recentMemos: recentWithSectors,
+    taste: args.taste,
+    watchlist,
+    upcomingEarnings,
+  });
+
   const attempts: IdeaAttempt[] = [];
-  const flagged: { ticker: string; reason: string }[] = [];
-  let candidates = enriched;
+  const flagged: { ticker: string; reason: string }[] = [...pick.watchlist];
   let best: IdeaSelection | null = null;
 
-  for (let attempt = 0; attempt < MAX_PREFLIGHT_ATTEMPTS && candidates.length > 0; attempt++) {
-    const selection = await finalSelect(
-      args.profile,
-      candidates,
-      recentWithSectors,
-      args.taste,
-      headlines,
-      upcomingEarnings,
-    );
-    for (const w of selection.watchlist ?? []) {
-      if (!flagged.some((f) => f.ticker.toUpperCase() === w.ticker.toUpperCase())) flagged.push(w);
-    }
-    const data = await fetchTickerData(selection.ticker);
+  // The conviction gate: pre-flight the pick with the full dataset; below the
+  // gate, take the NEXT name on the ranked list (its data is one cached fetch
+  // away) rather than shipping a name the analyst wouldn't back.
+  const walkOrder = [
+    pick.ticker,
+    ...top.map((c) => c.ticker).filter((t) => t.toUpperCase() !== pick.ticker.toUpperCase()),
+  ];
+  for (const ticker of walkOrder.slice(0, MAX_PREFLIGHT_ATTEMPTS)) {
+    const isPick = ticker.toUpperCase() === pick.ticker.toUpperCase();
+    const rankInfo = top.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase());
+    const rationale = isPick
+      ? pick.rationale
+      : `Next on the ranked list (factor score ${Math.round(rankInfo?.composite ?? 0)}) after the pick failed the conviction gate.`;
+    const data = await fetchTickerData(ticker);
     const preflight = await preflightCheck({
-      ticker: selection.ticker,
+      ticker,
       data,
-      selectionRationale: selection.rationale,
+      selectionRationale: rationale,
       profile: args.profile,
     });
+    const passes = preflight.write && preflight.expectedConviction >= MIN_CONVICTION;
     attempts.push({
-      ticker: selection.ticker,
-      write: preflight.write,
+      ticker,
+      write: passes,
       expectedConviction: preflight.expectedConviction,
       reason: preflight.reason,
     });
 
     const result: IdeaSelection = {
-      ok: preflight.write,
-      ticker: selection.ticker,
-      companyName: pool.find((c) => c.ticker.toUpperCase() === selection.ticker.toUpperCase())
-        ?.name,
-      rationale: selection.rationale,
+      ok: passes,
+      ticker,
+      companyName:
+        pool.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase())?.name ??
+        rankInfo?.name,
+      rationale,
       data,
       preflight,
       attempts,
       flagged,
       upcomingEarnings,
     };
-    if (preflight.write) return result;
+    if (passes) return result;
 
-    // A pre-flight reject may simply be early — track it until it ripens.
-    if (!flagged.some((f) => f.ticker.toUpperCase() === selection.ticker.toUpperCase())) {
+    // A gated name may simply be early — track it until it ripens.
+    if (!flagged.some((f) => f.ticker.toUpperCase() === ticker.toUpperCase())) {
       flagged.push({
-        ticker: selection.ticker,
-        reason: `pre-flight veto at ${preflight.expectedConviction}/10: ${preflight.reason}`,
+        ticker,
+        reason: `conviction gate at ${preflight.expectedConviction}/10: ${preflight.reason}`,
       });
     }
-
-    // Keep the stronger of the failed attempts as the fallback-of-last-resort.
     if (!best || preflight.expectedConviction > best.preflight.expectedConviction) {
       best = result;
     }
-    candidates = candidates.filter(
-      (c) => c.ticker.toUpperCase() !== selection.ticker.toUpperCase(),
-    );
   }
 
   if (!best) throw new Error("Idea funnel produced no candidates.");

@@ -15,7 +15,9 @@ loadEnv({ path: ".env.local" });
 import { db } from "../lib/db";
 import type { Profile } from "../lib/profile";
 import { deriveScreens, buildCandidatePool } from "../lib/screens";
-import { shortlistCandidates, enrichShortlist, finalSelect } from "../lib/selection";
+import { ensureFactorTable, loadFactorRows } from "../lib/factor-table";
+import { scoreCandidates, deriveWeights } from "../lib/scoring";
+import { pickFromRanked } from "../lib/pick";
 import { fetchTickerData } from "../lib/fmp";
 import { generateMemo } from "../lib/memo";
 
@@ -70,17 +72,22 @@ async function main() {
     const pool = await buildCandidatePool(screens);
     console.error(`Pool: ${pool.length} candidates`);
 
-    console.error("Shortlisting…");
-    const shortlist = await shortlistCandidates(profile, pool, [], []);
-    console.error(`Shortlist: ${shortlist.map((c) => c.ticker).join(", ")}`);
+    console.error("Scoring (pure code, no LLM)…");
+    await ensureFactorTable();
+    const factorRows = await loadFactorRows(pool.map((c) => c.ticker));
+    const weights = deriveWeights(profile);
+    const { ranked, quarantined } = scoreCandidates(pool, factorRows, weights);
+    console.error(
+      `Ranked ${ranked.length} (quarantined ${quarantined.length}); weights ${JSON.stringify(weights)}`,
+    );
+    console.error(
+      `Top 10: ${ranked.slice(0, 10).map((c) => `${c.ticker}(${Math.round(c.composite)})`).join(", ")}`,
+    );
 
-    console.error("Enriching shortlist with valuation data…");
-    const enriched = await enrichShortlist(shortlist);
-
-    console.error("Final selection…");
-    const selection = await finalSelect(profile, enriched, []);
-    ticker = selection.ticker;
-    rationale = selection.rationale;
+    console.error("Pick step…");
+    const pick = await pickFromRanked({ profile, ranked: ranked.slice(0, 20), recentMemos: [] });
+    ticker = pick.ticker;
+    rationale = pick.rationale;
     companyName = pool.find((c) => c.ticker === ticker)?.name;
     console.error(`Selected: ${ticker} — ${rationale}`);
   }

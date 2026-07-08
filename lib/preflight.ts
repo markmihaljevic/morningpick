@@ -45,11 +45,13 @@ export interface PreflightResult {
   reason: string;
 }
 
-/** Compact dataset digest — the check needs the shape, not the transcript. */
+/** Compact dataset digest — the check needs the shape, not the transcript.
+ * TTM vintages only: the annual ratio rows are stamped at fiscal-year-end
+ * prices and would anchor the conviction judgment on stale valuations. */
 function digestData(data: TickerData): string {
   const d = data as unknown as Record<string, unknown>;
   const pick: Record<string, unknown> = {};
-  for (const key of ["profile", "quote", "keyMetrics", "ratios", "street", "earnings"]) {
+  for (const key of ["profile", "quote", "keyMetricsTTM", "ratiosTTM", "street", "earnings"]) {
     if (key in d) pick[key] = d[key];
   }
   return JSON.stringify(pick).slice(0, 18_000);

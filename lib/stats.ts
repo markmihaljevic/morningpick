@@ -1,82 +1,64 @@
 import type { TickerData } from "./fmp";
+import { buildSnapshot } from "./figures";
 
 export interface KeyStat {
   label: string;
   value: string;
 }
 
-function first<T>(v: unknown): T | undefined {
-  return (Array.isArray(v) ? v[0] : v) as T | undefined;
-}
-
-function num(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-function fmtX(v: number | null): string | null {
-  return v === null ? null : `${v.toFixed(1)}x`;
-}
-
-function fmtPct(v: number | null): string | null {
-  return v === null ? null : `${(v * 100).toFixed(1)}%`;
-}
-
-function fmtCap(v: number | null, currency: string): string | null {
-  if (v === null) return null;
-  if (v >= 1e12) return `${currency}${(v / 1e12).toFixed(2)}T`;
-  if (v >= 1e9) return `${currency}${(v / 1e9).toFixed(1)}B`;
-  return `${currency}${(v / 1e6).toFixed(0)}M`;
-}
-
 /**
- * The research-note header block: key figures pulled deterministically from
- * the FMP dataset (never model-generated). Missing figures are omitted.
+ * The one-pager's key-figures block — read from the SAME snapshot as the
+ * writer's computed figures (lib/figures.ts), so the email and the PDFs can
+ * never disagree. All price-dependent values are at today's close.
  */
 export function buildKeyStats(data: TickerData): KeyStat[] {
-  const quote = first<Record<string, unknown>>(data.quote) ?? {};
-  const ratios = first<Record<string, unknown>>(data.ratios) ?? {};
-  const metrics = first<Record<string, unknown>>(data.keyMetrics) ?? {};
-  const profile = first<Record<string, unknown>>(data.profile) ?? {};
+  const s = buildSnapshot(data);
 
-  const currencyCode = typeof profile.currency === "string" ? profile.currency : "";
-  const cur = currencyCode === "USD" ? "$" : currencyCode ? `${currencyCode} ` : "";
-
-  const price = num(quote.price);
-  const yearLow = num(quote.yearLow);
-  const yearHigh = num(quote.yearHigh);
+  const fmtX = (v: number | null) => (v !== null && v > 0 && v <= 1000 ? `${v.toFixed(1)}x` : null);
+  const fmtPct = (v: number | null) => (v !== null ? `${(v * 100).toFixed(1)}%` : null);
+  const fmtCap = (v: number | null) => {
+    if (v === null) return null;
+    if (v >= 1e12) return `${s.listCur}${(v / 1e12).toFixed(2)}T`;
+    if (v >= 1e9) return `${s.listCur}${(v / 1e9).toFixed(1)}B`;
+    return `${s.listCur}${(v / 1e6).toFixed(0)}M`;
+  };
 
   const stats: (KeyStat | null)[] = [
-    price !== null ? { label: "Price", value: `${cur}${price >= 100 ? price.toFixed(0) : price.toFixed(2)}` } : null,
-    (() => {
-      const v = fmtCap(num(quote.marketCap), cur);
+    s.price !== null
+      ? { label: "Price", value: `${s.listCur}${s.price >= 100 ? s.price.toFixed(0) : s.price.toFixed(2)}` }
+      : null,
+    ((): KeyStat | null => {
+      const v = fmtCap(s.marketCap);
       return v ? { label: "Mkt cap", value: v } : null;
     })(),
-    (() => {
-      const v = fmtX(num(ratios.priceToEarningsRatio) ?? num(quote.pe));
+    ((): KeyStat | null => {
+      const v = fmtX(s.pe);
       return v ? { label: "P/E", value: v } : null;
     })(),
-    (() => {
-      const v = fmtX(num(ratios.priceToBookRatio));
+    ((): KeyStat | null => {
+      const v = fmtX(s.pb);
       return v ? { label: "P/B", value: v } : null;
     })(),
-    (() => {
-      const v = fmtX(num(metrics.evToEBITDA) ?? num(ratios.enterpriseValueMultiple));
+    ((): KeyStat | null => {
+      const v = fmtX(s.evEbitda);
       return v ? { label: "EV/EBITDA", value: v } : null;
     })(),
-    (() => {
-      const v = fmtPct(num(metrics.freeCashFlowYield));
+    ((): KeyStat | null => {
+      const v = fmtPct(s.fcfYield);
       return v ? { label: "FCF yield", value: v } : null;
     })(),
-    (() => {
-      const v = fmtPct(num(ratios.dividendYield));
+    ((): KeyStat | null => {
+      const v = fmtPct(s.divYield);
       return v ? { label: "Div yield", value: v } : null;
     })(),
-    yearLow !== null && yearHigh !== null
+    s.yearLow !== null && s.yearHigh !== null
       ? {
           label: "52w range",
-          value: `${yearLow >= 100 ? yearLow.toFixed(0) : yearLow.toFixed(1)}–${yearHigh >= 100 ? yearHigh.toFixed(0) : yearHigh.toFixed(1)}`,
+          value: `${s.yearLow >= 100 ? s.yearLow.toFixed(0) : s.yearLow.toFixed(1)}–${
+            s.yearHigh >= 100 ? s.yearHigh.toFixed(0) : s.yearHigh.toFixed(1)
+          }`,
         }
       : null,
   ];
-  return stats.filter((s): s is KeyStat => s !== null).slice(0, 8);
+  return stats.filter((st): st is KeyStat => st !== null).slice(0, 8);
 }

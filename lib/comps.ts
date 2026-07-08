@@ -1,4 +1,5 @@
 import type { TickerData, PeerComp } from "./fmp";
+import { buildSnapshot } from "./figures";
 
 /** One row of the comps table — the company itself first, then peers. */
 export interface CompsRow {
@@ -10,14 +11,6 @@ export interface CompsRow {
   ps: string;
 }
 
-function first<T>(v: unknown): T | undefined {
-  return (Array.isArray(v) ? v[0] : v) as T | undefined;
-}
-
-function num(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
 function fmtX(v: number | null): string {
   if (v === null || v <= 0 || v > 500) return "—";
   return `${v.toFixed(1)}x`;
@@ -25,21 +18,22 @@ function fmtX(v: number | null): string {
 
 /**
  * Deterministic peer-comparison table: the context that turns "cheap at
- * 1.6x" into an argument. Returns [] when the peer set is too thin to be
- * honest (fewer than two peers with any multiple).
+ * 1.6x" into an argument. The self row reads the SAME fresh-price snapshot
+ * as every other figure in the note (lib/figures.ts); peers carry FMP's
+ * daily-refreshed TTM multiples. Returns [] when the peer set is too thin
+ * to be honest (fewer than two peers with any multiple).
  */
 export function buildCompsRows(ticker: string, data: TickerData): CompsRow[] {
   const peers = (data.peers ?? []) as PeerComp[];
-  const quote = first<Record<string, unknown>>(data.quote) ?? {};
-  const ratios = first<Record<string, unknown>>(data.ratios) ?? {};
+  const s = buildSnapshot(data);
 
   const selfRow: CompsRow = {
     label: ticker,
     self: true,
-    pe: fmtX(num(ratios.priceToEarningsRatio) ?? num(quote.pe)),
-    evEbitda: fmtX(num(ratios.enterpriseValueMultiple)),
-    pb: fmtX(num(ratios.priceToBookRatio)),
-    ps: fmtX(num(ratios.priceToSalesRatio)),
+    pe: fmtX(s.pe),
+    evEbitda: fmtX(s.evEbitda),
+    pb: fmtX(s.pb),
+    ps: fmtX(s.ps),
   };
 
   const peerRows = peers
