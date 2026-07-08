@@ -144,10 +144,17 @@ export async function selectIdeaWithPreflight(args: {
 
   // The conviction gate: pre-flight the pick with the full dataset; below the
   // gate, take the NEXT name on the ranked list (its data is one cached fetch
-  // away) rather than shipping a name the analyst wouldn't back.
+  // away) rather than shipping a name the analyst wouldn't back. The walk
+  // sticks to the subscriber's OWN screens — serendipity names are for the
+  // pick step's judgment, not for spending gate attempts on names outside
+  // the stated mandate (observed: two attempts burned on $1B+ serendipity
+  // banks against a sub-$500M profile).
+  const walkPool = top.filter(
+    (c) => !c.source?.startsWith("serendipity") || c.ticker.toUpperCase() === pick.ticker.toUpperCase(),
+  );
   const walkOrder = [
     pick.ticker,
-    ...top.map((c) => c.ticker).filter((t) => t.toUpperCase() !== pick.ticker.toUpperCase()),
+    ...walkPool.map((c) => c.ticker).filter((t) => t.toUpperCase() !== pick.ticker.toUpperCase()),
   ];
   for (const ticker of walkOrder.slice(0, MAX_PREFLIGHT_ATTEMPTS)) {
     const isPick = ticker.toUpperCase() === pick.ticker.toUpperCase();

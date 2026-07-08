@@ -210,12 +210,22 @@ async function main() {
   const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
   // Distil the verified note into the short cover email; the full argument ships attached.
-  const cover = await writeCoverNote({ fullNoteMarkdown: memo.markdown, ticker, meta: memo.meta });
+  const willAttach = memoKind !== "review";
+  const cover = await writeCoverNote({
+    fullNoteMarkdown: memo.markdown,
+    ticker,
+    meta: memo.meta,
+    hasAttachments: willAttach,
+  });
   const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
   const coverSubject = cover?.subject || `${bareTicker(ticker)}: ${hook || "today's idea"}`;
   const coverBody =
     cover?.body ||
-    `${memo.meta?.one_liner ?? "My latest idea for you."}\n\nThe full write-up and a one-page fact sheet are attached — the complete argument, the numbers, and the sources are all in there.`;
+    `${memo.meta?.one_liner ?? "My latest idea for you."}${
+      willAttach
+        ? "\n\nThe full write-up and a one-page fact sheet are attached — the complete argument, the numbers, and the sources are all in there."
+        : ""
+    }`;
   console.error(`Cover note: ${cover ? `${cover.body.split(/\s+/).length} words` : "FALLBACK"} — subject "${coverSubject}"`);
 
   const html = renderMemoEmail({

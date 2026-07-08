@@ -37,7 +37,7 @@ Shape (as flowing prose, NOT labelled sections):
 1. Why this name today — 1-2 sentences.
 2. The thesis — 3-4 sentences, carrying only the numbers that actually matter.
 3. The main risk and the level or event that would make you walk away — 2 sentences.
-4. One closing line noting that the one-pager and full report are attached.
+4. One closing line noting that the one-pager and full report are attached — ONLY if the user message says attachments are included; otherwise end after the risk without mentioning attachments.
 
 HARD RULES:
 - Plain prose only. No markdown, no bullet points, no headers, no bold.
@@ -63,8 +63,14 @@ export async function writeCoverNote(args: {
   fullNoteMarkdown: string;
   ticker: string;
   meta: MemoMeta | null;
+  /** False on notes that ship without PDFs (reviews) — no "attached" line. */
+  hasAttachments?: boolean;
 }): Promise<CoverNote | null> {
   const cfg = config();
+  const attachNote =
+    args.hasAttachments === false
+      ? "This email has NO attachments — do not mention any attached one-pager or report."
+      : "Attachments ARE included (one-pager + full report) — close by noting they're attached.";
   try {
     const res = await anthropic().messages.create({
       model: cfg.MEMO_MODEL,
@@ -75,7 +81,7 @@ export async function writeCoverNote(args: {
       messages: [
         {
           role: "user",
-          content: `<full_note ticker="${args.ticker}">\n${args.fullNoteMarkdown}\n</full_note>\n\nWrite the cover note and subject.`,
+          content: `<full_note ticker="${args.ticker}">\n${args.fullNoteMarkdown}\n</full_note>\n\n${attachNote}\n\nWrite the cover note and subject.`,
         },
       ],
     });

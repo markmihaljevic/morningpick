@@ -472,12 +472,22 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     // The email is now a short cover note distilled from the verified full
     // note; the full argument ships attached. Fail-open to a clean subject +
     // one-liner if the distillation call errors.
-    const cover = await writeCoverNote({ fullNoteMarkdown: memo.markdown, ticker, meta: memo.meta });
+    const willAttach = memoKind !== "review" && config().ATTACH_TEARSHEET === "true";
+    const cover = await writeCoverNote({
+      fullNoteMarkdown: memo.markdown,
+      ticker,
+      meta: memo.meta,
+      hasAttachments: willAttach,
+    });
     const hook = h1Title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
     const coverSubject = cover?.subject || `${bareTicker(ticker)}: ${hook || "today's idea"}`;
     const coverBody =
       cover?.body ||
-      `${memo.meta?.one_liner ?? "My latest idea for you."}\n\nThe full write-up and a one-page fact sheet are attached — the complete argument, the numbers, and the sources are all in there.`;
+      `${memo.meta?.one_liner ?? "My latest idea for you."}${
+        willAttach
+          ? "\n\nThe full write-up and a one-page fact sheet are attached — the complete argument, the numbers, and the sources are all in there."
+          : ""
+      }`;
     title = coverSubject; // the DB title + email subject = what the reader saw
 
     memoId = crypto.randomUUID();
