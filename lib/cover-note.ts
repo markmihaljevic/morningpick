@@ -82,7 +82,14 @@ export async function writeCoverNote(args: {
     if (res.stop_reason === "refusal") return null;
     const text = res.content.find((b) => b.type === "text");
     const parsed = JSON.parse(text && "text" in text ? text.text : "{}") as Partial<CoverNote>;
-    const subject = (parsed.subject ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+    let subject = (parsed.subject ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+    // Enforce John's "bare ticker: hook" — strip any exchange suffix the model
+    // left on (CJ.TO: → CJ:), which it does often enough to guard against.
+    const bare = bareTicker(args.ticker);
+    subject = subject.replace(
+      new RegExp(`^${bare.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\.[A-Za-z]{1,4}\\b`),
+      bare,
+    );
     const body = (parsed.body ?? "").trim();
     if (!subject || body.length < 200) return null; // too thin to trust — fall back
     return { subject, body };
