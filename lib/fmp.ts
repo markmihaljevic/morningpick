@@ -392,7 +392,8 @@ export async function fetchTickerData(ticker: string): Promise<TickerData> {
       fmpGet("ratios", { ...symbol, limit: 10 }),
       fmpGet("ratios-ttm", symbol),
       fmpGet("key-metrics-ttm", symbol),
-      fmpGet("income-statement", { ...symbol, limit: 2 }),
+      // 4 years: [0]/[1] for YoY, [3] for the 3-year revenue CAGR.
+      fmpGet("income-statement", { ...symbol, limit: 4 }),
       fetchInsiderTrades(ticker),
       fetchStreetData(ticker),
       fetchLatestTranscript(ticker),

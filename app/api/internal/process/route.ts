@@ -16,6 +16,7 @@ import { getPortfolio } from "@/lib/portfolio";
 import { greetingName } from "@/lib/greeting";
 import { buildTearSheet } from "@/lib/tear-sheet";
 import { buildFullReport } from "@/lib/full-report";
+import { buildCompTable } from "@/lib/comp-table";
 import { writeCoverNote, bareTicker } from "@/lib/cover-note";
 import {
   getCoverageContext,
@@ -421,8 +422,12 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     // Research once, write per subscriber: acquire the day's shared fact
     // base for this ticker (built by whichever worker gets here first).
     // null → legacy self-researched path, so a brief failure never blocks.
-    const researchBrief =
-      memoKind === "review" ? null : await getOrBuildBrief(ticker, companyName, data, delivery.id);
+    // The comp table (sector-aware, filing facts cached) builds in parallel —
+    // ONE table feeds the writer, the verifier, and the one-pager alike.
+    const [researchBrief, compTable] = await Promise.all([
+      memoKind === "review" ? null : getOrBuildBrief(ticker, companyName, data, delivery.id),
+      memoKind === "review" ? null : buildCompTable({ ticker, companyName, data }),
+    ]);
 
     // Context-only holdings: the writer sees what they own; selection doesn't.
     const holdings = await getPortfolio(subscriber.id);
@@ -446,6 +451,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       researchBrief: researchBrief ?? undefined,
       portfolio: holdings,
       referenceLinks,
+      peerComps: compTable?.textForPrompt,
       light: lightMode,
     });
     const h1Title = memo.title; // "TICKER — hook" — the attached report's title
@@ -529,7 +535,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
 
     if (memoKind !== "review" && config().ATTACH_TEARSHEET === "true") {
       [tearSheet, fullReport] = await Promise.all([
-        buildTearSheet({ ticker, companyName, dateLine, preparedFor: subscriber.email, data, meta: memo.meta }),
+        buildTearSheet({ ticker, companyName, dateLine, preparedFor: subscriber.email, data, meta: memo.meta, compTable }),
         buildFullReport({
           markdown: memo.markdown,
           ticker,

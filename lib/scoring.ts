@@ -76,9 +76,16 @@ export function priceScale(
       : null);
   if (implied === null || implied <= 0 || price <= 0) return { scale: 1, fresh: true };
   const f = price / implied;
-  if (f > 0.6 && f < 1.7) return { scale: 1, fresh: true }; // same currency; price moved
-  if (f > 60 && f < 170) return { scale: 100, fresh: true }; // GBp quote vs GBP per-share
-  if (f > 0.006 && f < 0.017) return { scale: 0.01, fresh: true }; // the reverse
+  // Bands are deliberately TIGHT. A USD-reported, GBp-quoted name sits at
+  // fx×100 ≈ 75 and a EUR-reported one at ≈ 86 — both inside a loose "pence"
+  // band, and treating dollars-as-pence produced THX.L's wrong 1.8x P/E. True
+  // pence mixups sit at ~100 exactly (± modest price drift since FMP's
+  // refresh); anything else is an FX mismatch and gets FMP's own converted
+  // ratios rather than a guessed rescale. (The memo layer converts with real
+  // FX rates — lib/figures.ts; the scorer only ranks, so approximate is fine.)
+  if (f > 0.75 && f < 1.35) return { scale: 1, fresh: true }; // same currency; price moved
+  if (f > 92 && f < 109) return { scale: 100, fresh: true }; // GBp quote vs GBP per-share
+  if (f > 1 / 109 && f < 1 / 92) return { scale: 0.01, fresh: true }; // the reverse
   return { scale: 1, fresh: false }; // FX mismatch — use FMP's own ratios
 }
 

@@ -50,6 +50,7 @@ const VERIFY_SYSTEM = `You are a fact-checker for an investment memo before it i
 - A figure attributed to the dataset (prices, market cap, multiples, margins, growth rates, EPS, balance-sheet items, insider transactions) must match the dataset within reasonable rounding (~1-2%).
 - <computed_figures> is GROUND TRUTH: those ratios, margins, leverage, returns, per-share, 52-week-position, growth, and forward-consensus figures were computed deterministically from the dataset in code, with currency handled correctly. If a memo figure matches a <computed_figures> value, it is CORRECT — do not re-derive it a different way and flag a phantom discrepancy. Flag a figure as CRITICAL when it CONTRADICTS <computed_figures> (the memo says operating margin 12% but computed figures say 9.5%).
 - Derived arithmetic NOT covered by <computed_figures> (e.g. scenario upside "re-rating from 0.71x to 1.0x book") should be checked by recomputing it — but its inputs must trace to <computed_figures> or the dataset.
+- <peer_comps> (when present) is ground truth for PEER figures. Flag as CRITICAL: a peer multiple that contradicts its <peer_comps> cell, and a re-rating range or peer-multiple anchor built on a row NOT marked [clean comp] (ramp-ups, developers, different-product names mis-anchor the bull case — e.g. quoting "peers at 5.5x-35x" when the 35x is a non-comparable transition name).
 - OUT OF SCOPE — never flag: claims about news and events (deals, announcements, bids, deadlines, corporate actions, people). The author had live web-search results that you CANNOT see; <web_sources> lists what they consulted. Absence from the dataset is NOT evidence a news claim is wrong. Only flag an event claim if it DIRECTLY CONTRADICTS the dataset.
 - OUT OF SCOPE: figures attributed to a cited web source (a domain in parentheses).
 - ATTRIBUTION CHECK (the one exception to numbers-only): specific EVENT claims — deal terms, consideration structures, deadlines, named dates, scheme conditions — must carry attribution: an inline markdown link, a source domain in parentheses, or a clear match to a <web_sources> title. Paragraph-level attribution covers that paragraph's claims. Flag as CRITICAL an event claim with specific numbers/dates/terms that has NO attribution anywhere near it AND no basis in the dataset — not because it is false (you cannot know), but because unattributed event specifics are the memo's highest hallucination risk. General market color needs no attribution.
@@ -63,6 +64,7 @@ export async function verifyMemo(
   data: TickerData,
   webSources: { url: string; title: string }[] = [],
   computedFigures: ComputedFigure[] = [],
+  peerComps?: string,
 ): Promise<VerificationResult> {
   try {
     const stream = anthropic().messages.stream({
@@ -81,6 +83,7 @@ export async function verifyMemo(
             (computedFigures.length > 0
               ? `<computed_figures note="derived deterministically from the dataset in code — ground truth; the memo should quote these">\n${computedFigures.map((f) => `${f.label}: ${f.value}`).join("\n")}\n</computed_figures>\n\n`
               : "") +
+            (peerComps ? `${peerComps}\n\n` : "") +
             (webSources.length > 0
               ? `<web_sources note="search results the author consulted — you cannot see their contents">\n${webSources.map((s) => `- ${s.title} (${s.url})`).join("\n")}\n</web_sources>\n\n`
               : "") +

@@ -1,5 +1,5 @@
 import type { TickerData } from "./fmp";
-import { priceScale } from "./scoring";
+import { getFxRate, listingMajor } from "./fx";
 
 export interface ComputedFigure {
   label: string;
@@ -9,25 +9,32 @@ export interface ComputedFigure {
 /**
  * The single data snapshot behind a note (John's rule 9): every derived
  * figure computed ONCE, in code, and read by the email figures block, the
- * writer, the fact-checker, the one-pager, and the report alike — so the
- * email and the PDFs can never disagree.
+ * writer, the fact-checker, the one-pager stats, and the comp table alike —
+ * so no two surfaces can disagree.
  *
  * Price-dependent ratios are RECOMPUTED at today's close from per-share TTM
- * fundamentals (rule 3) — never taken from FMP's annual `ratios` rows, which
- * are stamped at fiscal-year-end prices (the CJ.TO 8.3%-vs-6.8% stale-yield
- * bug). When the listing/reporting currency check says recomputing would mix
- * currencies, FMP's own TTM ratios (converted internally, refreshed daily)
- * are used instead.
+ * fundamentals (rule 3) — never taken from FMP's precomputed rows, which are
+ * stamped at whatever price FMP last refreshed (the THX.L 1.8x-vs-2.5x bug).
+ *
+ * CURRENCY IS EXPLICIT (the actual root cause of THX.L): a name can QUOTE in
+ * GBp pence while REPORTING in USD. The reported currency comes from the
+ * statements, the listing currency from the profile, and the conversion is a
+ * real day-cached FX rate — never a magnitude heuristic, because fx×100 for
+ * a USD/GBp name (~75) is indistinguishable from a pence mixup by size alone.
+ * If the FX rate is unavailable, FMP's own converted TTM ratios are used and
+ * the snapshot says so (priceFresh=false) — approximation over garbage.
  */
 export interface FiguresSnapshot {
-  price: number | null;
-  listCur: string; // listing-currency prefix for price/market cap
-  repCur: string; // reporting-currency prefix for financials
-  marketCap: number | null;
-  enterpriseValue: number | null;
-  netDebt: number | null;
+  price: number | null; // listing units as quoted (e.g. pence)
+  listCur: string; // prefix for PRICE (minor units, e.g. "GBp ")
+  listCurMajor: string; // prefix for MARKET CAP (major units, e.g. "GBP ")
+  repCur: string; // prefix for financials (reported currency)
+  marketCap: number | null; // listing MAJOR units, as quoted
+  marketCapReported: number | null; // reported currency, at today's close
+  enterpriseValue: number | null; // reported currency
+  netDebt: number | null; // reported currency
   netDebtToEbitda: number | null;
-  priceFresh: boolean;
+  priceFresh: boolean; // false → FX unavailable, FMP's converted TTM ratios used
   pe: number | null;
   evEbitda: number | null;
   pb: number | null;
@@ -49,17 +56,24 @@ export interface FiguresSnapshot {
   currentRatio: number | null;
   debtToEquity: number | null;
   interestCoverage: number | null;
-  bookValuePerShare: number | null;
+  bookValuePerShare: number | null; // reported currency
   tangibleBookPerShare: number | null;
   cashPerShare: number | null;
   fcfPerShare: number | null;
   eps: number | null;
   yearLow: number | null;
   yearHigh: number | null;
-  revenueGrowth: number | null;
+  revenueGrowth: number | null; // YoY
   ebitdaGrowth: number | null;
   epsGrowth: number | null;
-  consensus: { year: string; revenue: number | null; ebitda: number | null; eps: number | null; analysts: number | null }[];
+  revenueCagr3y: number | null; // when 4 fiscal years are available
+  consensus: {
+    year: string;
+    revenue: number | null;
+    ebitda: number | null;
+    eps: number | null;
+    analysts: number | null;
+  }[];
 }
 
 function first<T>(v: unknown): T | undefined {
@@ -75,46 +89,71 @@ function curPrefix(code: unknown): string {
   return code === "USD" ? "$" : `${code} `;
 }
 
-export function buildSnapshot(data: TickerData): FiguresSnapshot {
-  const quote = first<Record<string, unknown>>(data.quote) ?? {};
-  const rt = first<Record<string, unknown>>(data.ratiosTTM) ?? {};
-  const kt = first<Record<string, unknown>>(data.keyMetricsTTM) ?? {};
-  const ra = first<Record<string, unknown>>(data.ratios) ?? {}; // annual — non-price fallback only
-  const ka = first<Record<string, unknown>>(data.keyMetrics) ?? {};
-  const inc0 = first<Record<string, unknown>>(data.incomeStatement) ?? {};
-  const inc1 = (Array.isArray(data.incomeStatement) ? data.incomeStatement[1] : undefined) as
-    | Record<string, unknown>
-    | undefined;
-  const profile = first<Record<string, unknown>>(data.profile) ?? {};
+export interface SnapshotParts {
+  profile: Record<string, unknown>;
+  quote: Record<string, unknown>;
+  ratiosTTM: Record<string, unknown>;
+  keyMetricsTTM: Record<string, unknown>;
+  /** Newest-first fiscal years; [0] used for reported currency + absolutes. */
+  incomeStatements: Record<string, unknown>[];
+  /** Annual rows — non-price fallbacks only (margins, returns). */
+  ratiosAnnual?: Record<string, unknown>;
+  keyMetricsAnnual?: Record<string, unknown>;
+  street?: { estimates?: unknown };
+}
 
-  const listCur = curPrefix(profile.currency);
-  const repCur = curPrefix(rt.reportedCurrency ?? ra.reportedCurrency ?? inc0.reportedCurrency);
+/**
+ * The snapshot core, shared by the subject and every comp-table peer so the
+ * whole page is one price epoch, one formula set, one currency treatment.
+ */
+export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSnapshot> {
+  const { profile, quote, ratiosTTM: rt, keyMetricsTTM: kt } = parts;
+  const inc0 = parts.incomeStatements[0] ?? {};
+  const inc1 = parts.incomeStatements[1];
+  const incLast = parts.incomeStatements[3]; // 4th year back → 3Y CAGR
+  const ra = parts.ratiosAnnual ?? {};
+  const ka = parts.keyMetricsAnnual ?? {};
 
-  const price = n(quote.price);
-  const marketCap = n(quote.marketCap);
+  const listingCode = typeof profile.currency === "string" ? profile.currency : "";
+  const { major, penceFactor } = listingMajor(listingCode);
+  const reported =
+    (typeof inc0.reportedCurrency === "string" && inc0.reportedCurrency) ||
+    (typeof ra.reportedCurrency === "string" && ra.reportedCurrency) ||
+    major; // no statements in sight → assume listing currency
 
-  // Currency-consistency check (rule 8), shared with the scorer.
-  const scaled = price !== null ? priceScale(rt as never, price) : { scale: 1, fresh: false };
-  const ps = (v: unknown) => (n(v) !== null ? (n(v) as number) * scaled.scale : null);
+  const listCur = curPrefix(listingCode);
+  const listCurMajor = curPrefix(major);
+  const repCur = curPrefix(reported);
 
-  // Price-dependent ratios: recompute at today's close when currency-safe,
-  // else FMP's own TTM value (daily-refreshed, currency-converted).
-  const ratio = (perShare: unknown, fmpTTM: unknown, invert = false): number | null => {
-    if (scaled.fresh && price !== null && ps(perShare) !== null) {
-      const v = ps(perShare) as number;
-      if (invert) return v !== 0 ? price / v : null; // price / per-share
-      return v / price; // per-share / price (yields)
-    }
-    return n(fmpTTM);
+  const price = n(quote.price); // listing units (possibly pence)
+  const marketCap = n(quote.marketCap); // listing MAJOR units (FMP normalizes)
+
+  // One explicit conversion: today's price and market cap in REPORTED terms.
+  const fx = reported && major ? await getFxRate(reported, major) : null; // 1 reported = fx major
+  const priceFresh = fx !== null;
+  const priceRep = price !== null && fx !== null ? price / penceFactor / fx : null;
+  const mcapRep = marketCap !== null && fx !== null ? marketCap / fx : null;
+
+  // Price-dependent ratios: recompute at today's close in reported currency;
+  // FMP's own converted TTM value is the labeled fallback when FX is missing.
+  const over = (perShare: unknown, fallback: unknown): number | null => {
+    const v = n(perShare);
+    if (priceRep !== null && v !== null) return v !== 0 ? priceRep / v : null;
+    return n(fallback);
+  };
+  const yield_ = (perShare: unknown, fallback: unknown): number | null => {
+    const v = n(perShare);
+    if (priceRep !== null && v !== null) return v / priceRep;
+    return n(fallback);
   };
 
   const pe = ((): number | null => {
-    const v = ratio(rt.netIncomePerShareTTM, rt.priceToEarningsRatioTTM, true);
+    const v = over(rt.netIncomePerShareTTM, rt.priceToEarningsRatioTTM);
     return v !== null && v > 0 ? v : null; // negative earnings → no meaningful P/E
   })();
-  const pb = ratio(rt.bookValuePerShareTTM, rt.priceToBookRatioTTM, true);
+  const pb = over(rt.bookValuePerShareTTM, rt.priceToBookRatioTTM);
   const pTangibleBook = ((): number | null => {
-    const v = ratio(rt.tangibleBookValuePerShareTTM, null, true);
+    const v = over(rt.tangibleBookValuePerShareTTM, null);
     if (v !== null && v > 0) return v;
     // Dimensionless fallback: P/B × (book / tangible book) — never mixes currencies.
     const pbv = n(rt.priceToBookRatioTTM);
@@ -122,37 +161,39 @@ export function buildSnapshot(data: TickerData): FiguresSnapshot {
     const tbv = n(rt.tangibleBookValuePerShareTTM);
     return pbv !== null && bv !== null && tbv !== null && tbv > 0 ? pbv * (bv / tbv) : null;
   })();
-  const psRatio = ((): number | null => {
-    const v = ratio(rt.revenuePerShareTTM, rt.priceToSalesRatioTTM, true);
+  const ps = ((): number | null => {
+    const v = over(rt.revenuePerShareTTM, rt.priceToSalesRatioTTM);
     return v !== null && v > 0 ? v : null;
   })();
   const pfcf = ((): number | null => {
-    const v = ratio(rt.freeCashFlowPerShareTTM, rt.priceToFreeCashFlowRatioTTM, true);
+    const v = over(rt.freeCashFlowPerShareTTM, rt.priceToFreeCashFlowRatioTTM);
     return v !== null && v > 0 ? v : null;
   })();
-  const earningsYield = ratio(rt.netIncomePerShareTTM, kt.earningsYieldTTM);
-  const fcfYield = ratio(rt.freeCashFlowPerShareTTM, kt.freeCashFlowYieldTTM);
-  const divYield = ratio(rt.dividendPerShareTTM, rt.dividendYieldTTM);
+  const earningsYield = yield_(rt.netIncomePerShareTTM, kt.earningsYieldTTM);
+  const fcfYield = yield_(rt.freeCashFlowPerShareTTM, kt.freeCashFlowYieldTTM);
+  const divYield = yield_(rt.dividendPerShareTTM, rt.dividendYieldTTM);
 
-  // EV re-anchored to today's market cap (net-debt piece is price-independent).
+  // EV re-anchored to today's market cap, ENTIRELY in reported currency —
+  // kt's marketCap/EV are reported-currency figures at FMP's refresh epoch.
   const evEbitda = ((): number | null => {
     const evOld = n(kt.enterpriseValueTTM);
     const mcapOld = n(kt.marketCap);
     const evx = n(kt.evToEBITDATTM) ?? n(rt.enterpriseValueMultipleTTM);
-    if (evx === null || evx <= 0) return null;
-    if (evOld !== null && mcapOld !== null && mcapOld > 0 && marketCap !== null) {
+    if (evx === null) return null;
+    if (evOld !== null && mcapOld !== null && mcapRep !== null && evx !== 0) {
       const ebitda = evOld / evx;
       if (ebitda > 0) {
-        const v = (evOld - mcapOld + marketCap) / ebitda;
+        const v = (evOld - mcapOld + mcapRep) / ebitda;
         return v > 0 ? v : null;
       }
+      return null; // negative EBITDA → n/m
     }
-    return evx;
+    return evx > 0 ? evx : null;
   })();
   const enterpriseValue = ((): number | null => {
     const evOld = n(kt.enterpriseValueTTM);
     const mcapOld = n(kt.marketCap);
-    if (evOld !== null && mcapOld !== null && marketCap !== null) return evOld - mcapOld + marketCap;
+    if (evOld !== null && mcapOld !== null && mcapRep !== null) return evOld - mcapOld + mcapRep;
     return evOld;
   })();
 
@@ -166,8 +207,14 @@ export function buildSnapshot(data: TickerData): FiguresSnapshot {
     if (v0 === null || v1 === null || v1 <= 0) return null;
     return (v0 - v1) / v1;
   };
+  const revenueCagr3y = ((): number | null => {
+    const now = n(inc0.revenue);
+    const then = n(incLast?.revenue);
+    if (now === null || then === null || then <= 0 || now <= 0) return null;
+    return Math.pow(now / then, 1 / 3) - 1;
+  })();
 
-  const estimates = (data.street?.estimates ?? []) as Record<string, unknown>[];
+  const estimates = (parts.street?.estimates ?? []) as Record<string, unknown>[];
   const consensus = (Array.isArray(estimates) ? estimates.slice(0, 3) : [])
     .map((e) => ({
       year: typeof e.fiscalYearEnd === "string" ? e.fiscalYearEnd.slice(0, 4) : "",
@@ -181,17 +228,19 @@ export function buildSnapshot(data: TickerData): FiguresSnapshot {
   return {
     price,
     listCur,
+    listCurMajor,
     repCur,
     marketCap,
+    marketCapReported: mcapRep,
     enterpriseValue,
     netDebt,
     netDebtToEbitda: ndToEbitda,
-    priceFresh: scaled.fresh,
+    priceFresh,
     pe,
     evEbitda,
     pb,
     pTangibleBook,
-    ps: psRatio,
+    ps,
     pfcf,
     earningsYield,
     fcfYield,
@@ -208,18 +257,35 @@ export function buildSnapshot(data: TickerData): FiguresSnapshot {
     currentRatio: n(rt.currentRatioTTM) ?? n(ra.currentRatio),
     debtToEquity: n(rt.debtToEquityRatioTTM) ?? n(ra.debtToEquityRatio),
     interestCoverage: n(rt.interestCoverageRatioTTM) ?? n(ra.interestCoverageRatio),
-    bookValuePerShare: ps(rt.bookValuePerShareTTM) ?? n(ra.bookValuePerShare),
-    tangibleBookPerShare: ps(rt.tangibleBookValuePerShareTTM) ?? n(ra.tangibleBookValuePerShare),
-    cashPerShare: ps(rt.cashPerShareTTM) ?? n(ra.cashPerShare),
-    fcfPerShare: ps(rt.freeCashFlowPerShareTTM) ?? n(ra.freeCashFlowPerShare),
+    bookValuePerShare: n(rt.bookValuePerShareTTM) ?? n(ra.bookValuePerShare),
+    tangibleBookPerShare: n(rt.tangibleBookValuePerShareTTM) ?? n(ra.tangibleBookValuePerShare),
+    cashPerShare: n(rt.cashPerShareTTM) ?? n(ra.cashPerShare),
+    fcfPerShare: n(rt.freeCashFlowPerShareTTM) ?? n(ra.freeCashFlowPerShare),
     eps: n(inc0.eps),
     yearLow: n(quote.yearLow),
     yearHigh: n(quote.yearHigh),
     revenueGrowth: growth(inc0.revenue, inc1?.revenue),
     ebitdaGrowth: growth(inc0.ebitda, inc1?.ebitda),
     epsGrowth: growth(inc0.eps, inc1?.eps),
+    revenueCagr3y,
     consensus,
   };
+}
+
+/** Snapshot for the main dataset shape. */
+export async function buildSnapshot(data: TickerData): Promise<FiguresSnapshot> {
+  return snapshotFromParts({
+    profile: first<Record<string, unknown>>(data.profile) ?? {},
+    quote: first<Record<string, unknown>>(data.quote) ?? {},
+    ratiosTTM: first<Record<string, unknown>>(data.ratiosTTM) ?? {},
+    keyMetricsTTM: first<Record<string, unknown>>(data.keyMetricsTTM) ?? {},
+    incomeStatements: (Array.isArray(data.incomeStatement)
+      ? data.incomeStatement
+      : []) as Record<string, unknown>[],
+    ratiosAnnual: first<Record<string, unknown>>(data.ratios),
+    keyMetricsAnnual: first<Record<string, unknown>>(data.keyMetrics),
+    street: data.street,
+  });
 }
 
 // ——— formatting ———
@@ -247,12 +313,12 @@ function fmtShare(v: number | null, cur: string): string | null {
 }
 
 /**
- * The writer/verifier fact list, rendered from the snapshot. Everything here
- * is at TODAY's close (or FMP's daily-refreshed TTM value when the currency
- * check forbids recomputation) — never fiscal-year-end vintage.
+ * The writer/verifier fact list, rendered from the snapshot. Everything is
+ * at TODAY's close with currencies handled explicitly — never fiscal-year-end
+ * vintage, never a pence/pounds or cross-currency mixup.
  */
-export function buildComputedFigures(data: TickerData): ComputedFigure[] {
-  const s = buildSnapshot(data);
+export async function buildComputedFigures(data: TickerData): Promise<ComputedFigure[]> {
+  const s = await buildSnapshot(data);
   const out: (ComputedFigure | null)[] = [];
   const push = (label: string, value: string | null) => out.push(value ? { label, value } : null);
 
@@ -260,7 +326,8 @@ export function buildComputedFigures(data: TickerData): ComputedFigure[] {
     "Price",
     s.price !== null ? `${s.listCur}${s.price >= 100 ? s.price.toFixed(0) : s.price.toFixed(2)}` : null,
   );
-  push("Market cap", fmtMoney(s.marketCap, s.listCur));
+  // Market cap is in MAJOR units even when the price quotes in pence.
+  push("Market cap", fmtMoney(s.marketCap, s.listCurMajor));
   push("Enterprise value", fmtMoney(s.enterpriseValue, s.repCur));
   if (s.netDebt !== null) {
     push("Net debt", s.netDebt < 0 ? `net cash ${fmtMoney(-s.netDebt, s.repCur)}` : fmtMoney(s.netDebt, s.repCur));
@@ -310,6 +377,7 @@ export function buildComputedFigures(data: TickerData): ComputedFigure[] {
 
   const g = (v: number | null) => (v === null ? null : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`);
   push("Revenue growth (YoY)", g(s.revenueGrowth));
+  push("Revenue growth (3Y CAGR)", g(s.revenueCagr3y));
   push("EBITDA growth (YoY)", g(s.ebitdaGrowth));
   push("EPS growth (YoY)", g(s.epsGrowth));
 
@@ -331,7 +399,7 @@ export function buildComputedFigures(data: TickerData): ComputedFigure[] {
 export function computedFiguresBlock(figures: ComputedFigure[]): string {
   if (figures.length === 0) return "";
   const lines = figures.map((f) => `${f.label}: ${f.value}`).join("\n");
-  return `<computed_figures note="Calculated for you directly from the filings AT TODAY'S CLOSE, with currency handled correctly (each absolute figure carries its currency; ratios and margins are dimensionless). USE THESE VERBATIM. Do NOT divide, multiply, or otherwise recompute raw dataset numbers yourself, and do NOT quote valuation ratios from the dataset's annual rows — those are stamped at fiscal-year-end prices and are stale. If a figure you want is not here and not stated outright in the dataset, do not calculate it: describe it qualitatively or leave it out.">
+  return `<computed_figures note="Calculated for you directly from the filings AT TODAY'S CLOSE, with currency handled correctly (each absolute figure carries its currency; ratios and margins are dimensionless; on UK names GBp means pence and GBP means pounds). USE THESE VERBATIM. Do NOT divide, multiply, or otherwise recompute raw dataset numbers yourself, and do NOT quote valuation ratios from the dataset's annual rows — those are stamped at fiscal-year-end prices and are stale. If a figure you want is not here and not stated outright in the dataset, do not calculate it: describe it qualitatively or leave it out.">
 ${lines}
 </computed_figures>
 

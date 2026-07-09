@@ -2,10 +2,10 @@ import React from "react";
 import { renderToBuffer, type DocumentProps } from "@react-pdf/renderer";
 import { TearSheet } from "./pdf/tear-sheet";
 import { buildKeyStats } from "./stats";
-import { buildCompsRows } from "./comps";
 import { buildFiveYearChartUrl } from "./chart";
 import type { TickerData } from "./fmp";
 import type { MemoMeta } from "./memo";
+import type { CompTable } from "./comp-table";
 
 /**
  * Build the one-page tear-sheet PDF for a note: key figures, 5-year chart,
@@ -19,6 +19,8 @@ export async function buildTearSheet(args: {
   preparedFor?: string;
   data: TickerData;
   meta: MemoMeta | null;
+  /** Built once per note and shared with the writer — same table everywhere. */
+  compTable?: CompTable | null;
 }): Promise<Buffer | null> {
   try {
     const p = (Array.isArray(args.data.profile) ? args.data.profile[0] : args.data.profile) as
@@ -34,7 +36,10 @@ export async function buildTearSheet(args: {
         .join(" ")
         .slice(0, 300) || undefined;
     const sector = p?.sector || p?.industry || undefined;
-    const chartUrl = await buildFiveYearChartUrl(args.ticker, currency);
+    const [chartUrl, stats] = await Promise.all([
+      buildFiveYearChartUrl(args.ticker, currency),
+      buildKeyStats(args.data),
+    ]);
     const buffer = await renderToBuffer(
       // TearSheet returns a <Document>; createElement can't see that through the fn type.
       React.createElement(TearSheet, {
@@ -44,8 +49,8 @@ export async function buildTearSheet(args: {
         sector,
         dateLine: args.dateLine,
         meta: args.meta,
-        stats: buildKeyStats(args.data),
-        comps: buildCompsRows(args.ticker, args.data),
+        stats,
+        compTable: args.compTable ?? null,
         chartUrl,
       }) as React.ReactElement<DocumentProps>,
     );

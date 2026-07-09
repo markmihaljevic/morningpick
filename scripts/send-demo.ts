@@ -25,6 +25,7 @@ import { getPortfolio } from "../lib/portfolio";
 import { greetingName } from "../lib/greeting";
 import { buildTearSheet } from "../lib/tear-sheet";
 import { buildFullReport } from "../lib/full-report";
+import { buildCompTable } from "../lib/comp-table";
 import { writeCoverNote, bareTicker } from "../lib/cover-note";
 import { config } from "../lib/config";
 import { sendEmail, replyAddress } from "../lib/resend";
@@ -184,10 +185,15 @@ async function main() {
   const referenceLinks =
     memoKind === "review" ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
 
-  const researchBrief =
-    memoKind === "review" ? null : await getOrBuildBrief(ticker, companyName, data, "demo");
+  const [researchBrief, compTable] = await Promise.all([
+    memoKind === "review" ? null : getOrBuildBrief(ticker, companyName, data, "demo"),
+    memoKind === "review" ? null : buildCompTable({ ticker, companyName, data }),
+  ]);
   const holdings = await getPortfolio(subscriber.id);
   console.error(`Research brief: ${researchBrief ? `ready (${researchBrief.sources.length} sources)` : "unavailable — legacy path"}`);
+  console.error(
+    `Comp table: ${compTable ? `${compTable.groupLabel} — ${compTable.columns.map((c) => c.label).join(", ")} (${compTable.rows.length} rows)` : "none"}`,
+  );
   console.error(`Generating + fact-checking ${memoKind} note…`);
   const memo = await generateVerifiedMemo({
     profile,
@@ -202,6 +208,7 @@ async function main() {
     researchBrief: researchBrief ?? undefined,
     portfolio: holdings,
     referenceLinks,
+    peerComps: compTable?.textForPrompt,
   });
   console.error(
     `Verification: ${memo.verification.critical_issues.length} critical, ${memo.verification.minor_issues.length} minor issues`,
@@ -247,7 +254,7 @@ async function main() {
     memoKind === "review"
       ? [null, null]
       : await Promise.all([
-          buildTearSheet({ ticker, companyName, dateLine, preparedFor: subscriber.email, data, meta: memo.meta }),
+          buildTearSheet({ ticker, companyName, dateLine, preparedFor: subscriber.email, data, meta: memo.meta, compTable }),
           buildFullReport({ markdown: memo.markdown, ticker, companyName, dateLine, data, meta: memo.meta, sources: memo.sources }),
         ]);
   console.error(

@@ -1,7 +1,7 @@
 import React from "react";
 import { Document, Page, Text, View, Image, StyleSheet } from "@react-pdf/renderer";
 import type { KeyStat } from "../stats";
-import type { CompsRow } from "../comps";
+import type { CompTable } from "../comp-table";
 import type { MemoMeta } from "../memo";
 
 // A restrained, professional palette — no brand colours. Reads like a broker
@@ -75,8 +75,14 @@ export interface TearSheetArgs {
   dateLine: string;
   meta?: MemoMeta | null;
   stats: KeyStat[];
-  comps: CompsRow[];
+  compTable?: CompTable | null;
   chartUrl?: string | null;
+}
+
+/** Truncate a company NAME if needed — never the ticker (John's rule 1). */
+function rowLabel(name: string, ticker: string): string {
+  const trimmed = name.length > 26 ? `${name.slice(0, 25).trimEnd()}…` : name;
+  return `${trimmed} (${ticker})`;
 }
 
 /**
@@ -132,38 +138,41 @@ export function TearSheet(args: TearSheetArgs) {
           </>
         )}
 
-        {args.comps.length > 0 && (
+        {args.compTable && args.compTable.rows.length > 0 && (
           <>
-            <Text style={S.h}>VALUATION VS PEERS</Text>
+            <Text style={S.h}>VALUATION VS PEERS — {args.compTable.groupLabel.toUpperCase()}</Text>
             <View style={[S.tr, { borderBottomWidth: 0.75, borderBottomColor: INK }]}>
-              <Text style={[S.th, { flex: 2 }]}> </Text>
-              {["P/E", "EV/EBITDA", "P/B", "P/S"].map((h) => (
-                <Text key={h} style={[S.th, { flex: 1, textAlign: "right" }]}>
-                  {h}
+              <Text style={[S.th, { flex: 2.4 }]}> </Text>
+              {args.compTable.columns.map((c) => (
+                <Text key={c.key} style={[S.th, { flex: 1, textAlign: "right" }]}>
+                  {c.label.toUpperCase()}
                 </Text>
               ))}
             </View>
-            {args.comps.map((r, i) => (
+            {args.compTable.rows.map((r, i) => (
               <View key={i} style={S.tr}>
-                <Text
-                  style={{
-                    flex: 2,
-                    fontFamily: r.self ? "Helvetica-Bold" : "Helvetica",
-                    fontSize: 8.5,
-                    color: r.self ? INK : GREY,
-                  }}
-                >
-                  {r.label}
-                  {r.self ? "  (this name)" : ""}
-                </Text>
-                {[r.pe, r.evEbitda, r.pb, r.ps].map((v, j) => (
+                <View style={{ flex: 2.4 }}>
+                  <Text
+                    style={{
+                      fontFamily: r.self ? "Helvetica-Bold" : "Helvetica",
+                      fontSize: 8,
+                      color: r.self ? INK : GREY,
+                    }}
+                  >
+                    {rowLabel(r.name, r.ticker)}
+                  </Text>
+                  {r.tag ? (
+                    <Text style={{ fontSize: 6, color: GREY, marginTop: 1 }}>{r.tag}</Text>
+                  ) : null}
+                </View>
+                {r.cells.map((v, j) => (
                   <Text
                     key={j}
                     style={{
                       flex: 1,
                       textAlign: "right",
                       fontFamily: r.self ? "Helvetica-Bold" : "Helvetica",
-                      fontSize: 8.5,
+                      fontSize: 8,
                       color: r.self ? INK : GREY,
                     }}
                   >
@@ -172,6 +181,11 @@ export function TearSheet(args: TearSheetArgs) {
                 ))}
               </View>
             ))}
+            {args.compTable.footnotes.length > 0 && (
+              <Text style={{ fontSize: 5.5, color: GREY, marginTop: 3, lineHeight: 1.5 }}>
+                {args.compTable.footnotes.join("  ·  ")}
+              </Text>
+            )}
           </>
         )}
 

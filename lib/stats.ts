@@ -9,18 +9,20 @@ export interface KeyStat {
 /**
  * The one-pager's key-figures block — read from the SAME snapshot as the
  * writer's computed figures (lib/figures.ts), so the email and the PDFs can
- * never disagree. All price-dependent values are at today's close.
+ * never disagree. All price-dependent values are at today's close. Market
+ * cap is labeled in MAJOR units (GBP, never GBp) — the quote's cap is in
+ * pounds even when the price quotes in pence.
  */
-export function buildKeyStats(data: TickerData): KeyStat[] {
-  const s = buildSnapshot(data);
+export async function buildKeyStats(data: TickerData): Promise<KeyStat[]> {
+  const s = await buildSnapshot(data);
 
   const fmtX = (v: number | null) => (v !== null && v > 0 && v <= 1000 ? `${v.toFixed(1)}x` : null);
   const fmtPct = (v: number | null) => (v !== null ? `${(v * 100).toFixed(1)}%` : null);
   const fmtCap = (v: number | null) => {
     if (v === null) return null;
-    if (v >= 1e12) return `${s.listCur}${(v / 1e12).toFixed(2)}T`;
-    if (v >= 1e9) return `${s.listCur}${(v / 1e9).toFixed(1)}B`;
-    return `${s.listCur}${(v / 1e6).toFixed(0)}M`;
+    if (v >= 1e12) return `${s.listCurMajor}${(v / 1e12).toFixed(2)}T`;
+    if (v >= 1e9) return `${s.listCurMajor}${(v / 1e9).toFixed(1)}B`;
+    return `${s.listCurMajor}${(v / 1e6).toFixed(0)}M`;
   };
 
   const stats: (KeyStat | null)[] = [

@@ -17,6 +17,7 @@ export const MEMO_SYSTEM_PROMPT = `You are the senior analyst at Morningpick. Ev
 - If a figure you want isn't in the dataset and you can't cite it, say so plainly — never fill the gap. On a data-poor name (pre-revenue, thin coverage), lean on what the dataset DOES give (cash, book value, share count) and be honest about the rest; that honesty is the note, not a weakness.
 - Date-stamp price data ("as of the last close in today's data").
 - CURRENCY DISCIPLINE: for non-US listings the quote (price, market cap) is in the LISTING currency (GBp/GBP, SEK, EUR) while statements are usually USD — check reportedCurrency. Never sit a listing-currency figure next to a USD figure as if comparable; state each headline number's currency, and convert explicitly (name the rate) if you must compare.
+- PEER MULTIPLES come from <peer_comps> verbatim — same rules as computed figures. When citing a peer multiple RANGE for the re-rating case, use ONLY the rows marked [clean comp]: a ramp-up, developer, or different-product peer's multiple says nothing about the subject's re-rating and citing one (e.g. a 35x P/E from a name that just returned to profit) mis-anchors the whole bull case.
 - NO PLUMBING IN THE PROSE: never let internal mechanics surface in what you write. No "the dataset", "the data", "on the dataset's own numbers", raw field names, or "reportedCurrency" in a sentence. State the conclusion as an analyst would; if a figure genuinely isn't available, say it the human way ("the filings don't break this out"), not "the dataset doesn't have this field".
 - Use web search ONLY for recent news/catalysts (~last month). Paraphrase in your own words; name the source domain in parentheses, e.g. (reuters.com).
 - Search FINDS, fetch READS: if the case hinges on a document (a deal announcement, RNS, filing), use web_fetch to read the primary text before characterizing it. Don't fetch what the dataset already gives you (financials, transcript).
@@ -68,6 +69,8 @@ export function buildMemoUserPrompt(args: {
   referenceLinks?: { label: string; url: string }[]; // curated links to weave in inline
   /** Derived figures precomputed in code — the writer quotes, never recomputes. */
   computedFigures?: ComputedFigure[];
+  /** The sector-aware comp table block (lib/comp-table.ts textForPrompt). */
+  peerComps?: string;
 }): string {
   const { profile, ticker, companyName, data, today, selectionRationale } = args;
 
@@ -192,7 +195,9 @@ ${
       ? ""
       : `Chosen ticker: ${ticker}${companyName ? ` (${companyName})` : ""}\n`
   }${args.followup || args.secondLook || args.review ? "" : `Why this ticker was selected for them: ${selectionRationale}\n`}
-${args.computedFigures && args.computedFigures.length > 0 ? computedFiguresBlock(args.computedFigures) : ""}<dataset>
+${args.computedFigures && args.computedFigures.length > 0 ? computedFiguresBlock(args.computedFigures) : ""}${
+    args.peerComps ? `${args.peerComps}\n\n` : ""
+  }<dataset>
 ${JSON.stringify(data)}
 </dataset>
 

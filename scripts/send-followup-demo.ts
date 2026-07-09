@@ -16,6 +16,7 @@ import { generateVerifiedMemo } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
 import { writeCoverNote, bareTicker } from "../lib/cover-note";
 import { buildTearSheet } from "../lib/tear-sheet";
+import { buildCompTable } from "../lib/comp-table";
 import { buildFullReport } from "../lib/full-report";
 import { config } from "../lib/config";
 import { sendEmail, replyAddress } from "../lib/resend";
@@ -81,6 +82,7 @@ async function main() {
   });
 
   const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  const compTable = await buildCompTable({ ticker: target.ticker, companyName: original?.company_name ?? undefined, data });
   const cover = await writeCoverNote({ fullNoteMarkdown: memo.markdown, ticker: target.ticker, meta: memo.meta });
   const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
   const coverSubject = cover?.subject || `${bareTicker(target.ticker)}: ${hook || "an update"}`;
@@ -96,7 +98,7 @@ async function main() {
     dateLine,
   });
   const [tearSheet, fullReport] = await Promise.all([
-    buildTearSheet({ ticker: target.ticker, companyName: original?.company_name ?? undefined, dateLine, preparedFor: subscriber.email, data, meta: memo.meta }),
+    buildTearSheet({ ticker: target.ticker, companyName: original?.company_name ?? undefined, dateLine, preparedFor: subscriber.email, data, meta: memo.meta, compTable }),
     buildFullReport({ markdown: memo.markdown, ticker: target.ticker, companyName: original?.company_name ?? undefined, dateLine, data, meta: memo.meta, sources: memo.sources }),
   ]);
   const bare = bareTicker(target.ticker);

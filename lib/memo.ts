@@ -58,6 +58,8 @@ export async function generateMemo(args: {
   researchBrief?: ResearchBrief;
   portfolio?: { ticker: string; name: string | null; note: string | null }[];
   referenceLinks?: { label: string; url: string }[];
+  /** Sector-aware comp table block — quoted verbatim, clean anchors only. */
+  peerComps?: string;
   /** Final-attempt degradation: fewer tool rounds, no editorial — ship good over perfect. */
   light?: boolean;
 }): Promise<GeneratedMemo> {
@@ -77,7 +79,8 @@ export async function generateMemo(args: {
     researchBrief: args.researchBrief,
     portfolio: args.portfolio,
     referenceLinks: args.referenceLinks,
-    computedFigures: args.review ? undefined : buildComputedFigures(args.data),
+    computedFigures: args.review ? undefined : await buildComputedFigures(args.data),
+    peerComps: args.review ? undefined : args.peerComps,
   });
 
   const baseRequest = {
@@ -390,15 +393,16 @@ export async function generateVerifiedMemo(args: {
   researchBrief?: ResearchBrief;
   portfolio?: { ticker: string; name: string | null; note: string | null }[];
   referenceLinks?: { label: string; url: string }[];
+  peerComps?: string;
   light?: boolean;
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   const MAX_REGENS = args.light ? 1 : 2;
   // The same precomputed figures the writer quotes — ground truth for the check.
-  const figures = args.review ? [] : buildComputedFigures(args.data);
+  const figures = args.review ? [] : await buildComputedFigures(args.data);
   let memo = await generateMemo(args);
   // The attribution check should recognize brief-sourced claims as sourced.
   const verifySources = args.researchBrief ? args.researchBrief.sources : memo.sources;
-  let verification = await verifyMemo(memo.markdown, args.data, verifySources, figures);
+  let verification = await verifyMemo(memo.markdown, args.data, verifySources, figures, args.peerComps);
   const priorIssues: { claim: string; problem: string }[] = [];
   for (let regen = 0; !verification.passed && regen < MAX_REGENS; regen++) {
     priorIssues.push(...verification.critical_issues);
@@ -415,7 +419,7 @@ export async function generateVerifiedMemo(args: {
           .map((i) => `- "${i.claim}": ${i.problem}`)
           .join("\n")}`,
     });
-    verification = await verifyMemo(memo.markdown, args.data, verifySources, figures);
+    verification = await verifyMemo(memo.markdown, args.data, verifySources, figures, args.peerComps);
   }
   if (!verification.passed) {
     throw new Error(
