@@ -79,9 +79,18 @@ export interface TearSheetArgs {
   chartUrl?: string | null;
 }
 
-/** Truncate a company NAME if needed — never the ticker (John's rule 1). */
+/** Truncate a company NAME if needed — never the ticker (John's rule 1).
+ * Corporate suffixes go first: "Caledonia Mining Corporation Plc" reads
+ * better as "Caledonia Mining" than as "Caledonia Mining Corporat…". */
 function rowLabel(name: string, ticker: string): string {
-  const trimmed = name.length > 26 ? `${name.slice(0, 25).trimEnd()}…` : name;
+  let clean = name;
+  if (clean.length > 26) {
+    clean = clean
+      .replace(/[,.]?\s+(PLC|Plc|plc|Ltd\.?|Limited|Corporation|Corp\.?|Inc\.?|Incorporated|S\.?A\.?|AG|NV|N\.V\.|SE|ASA|AB|Oyj|SpA|S\.p\.A\.)\.?\s*$/g, "")
+      .replace(/[,.]?\s+(PLC|Plc|plc|Ltd\.?|Limited|Corporation|Corp\.?|Inc\.?)\.?\s*$/g, "")
+      .trim();
+  }
+  const trimmed = clean.length > 26 ? `${clean.slice(0, 25).trimEnd()}…` : clean;
   return `${trimmed} (${ticker})`;
 }
 

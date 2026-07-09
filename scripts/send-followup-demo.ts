@@ -63,6 +63,13 @@ async function main() {
 
   console.error(`Generating follow-up on ${target.ticker}…`);
   const data = await fetchTickerData(target.ticker);
+  // Comp table BEFORE the memo so the writer and verifier see the exact
+  // table that ships in the attached one-pager.
+  const compTable = await buildCompTable({
+    ticker: target.ticker,
+    companyName: original?.company_name ?? undefined,
+    data,
+  });
   const memo = await generateVerifiedMemo({
     profile,
     ticker: target.ticker,
@@ -79,10 +86,10 @@ async function main() {
         trigger?.detail ??
         `Demo trigger: reviewing the ${target.date} note on ${target.ticker} (${target.pitchPrice} → ${target.priceNow}).`,
     },
+    peerComps: compTable?.textForPrompt,
   });
 
   const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
-  const compTable = await buildCompTable({ ticker: target.ticker, companyName: original?.company_name ?? undefined, data });
   const cover = await writeCoverNote({ fullNoteMarkdown: memo.markdown, ticker: target.ticker, meta: memo.meta });
   const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
   const coverSubject = cover?.subject || `${bareTicker(target.ticker)}: ${hook || "an update"}`;

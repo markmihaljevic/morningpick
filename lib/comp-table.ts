@@ -83,13 +83,18 @@ export interface CompTable {
   textForPrompt: string;
 }
 
+// Two different kinds of missing (John's rules): n/a = not found/disclosed,
+// n/m = present but not meaningful (negative earnings, non-earner stage).
+// Formatters return null for absent data; each cell decides which to print.
 const N_A = "n/a";
 const N_M = "n/m";
 
-const fmtX = (v: number | null): string => (v !== null && v > 0 && v <= 500 ? `${v.toFixed(1)}x` : N_M);
-const fmtPct = (v: number | null): string => (v !== null ? `${(v * 100).toFixed(1)}%` : N_M);
-const fmtMoney = (v: number | null, cur: string): string => {
-  if (v === null) return N_M;
+const fmtX = (v: number | null): string | null =>
+  v !== null && v > 0 && v <= 500 ? `${v.toFixed(1)}x` : null;
+const fmtPct = (v: number | null): string | null =>
+  v !== null ? `${(v * 100).toFixed(1)}%` : null;
+const fmtMoney = (v: number | null, cur: string): string | null => {
+  if (v === null) return null;
   const sign = v < 0 ? "-" : "";
   const a = Math.abs(v);
   if (a >= 1e9) return `${sign}${cur}${(a / 1e9).toFixed(1)}B`;
@@ -106,6 +111,7 @@ interface RowData {
   revenue: number | null;
   netIncome: number | null;
   da: number | null;
+  shares: number | null;
   facts: Map<string, FilingFact>;
 }
 
@@ -120,55 +126,80 @@ function computedCell(key: string, r: RowData, nonEarner: boolean): string {
   const s = r.s;
   switch (key) {
     case "pe":
-      return fmtX(s.pe);
+      // n/m only when earnings are PRESENT and non-positive; absent → n/a.
+      if (s.epsTTM !== null && s.epsTTM <= 0) return N_M;
+      return fmtX(s.pe) ?? N_A;
     case "ev_ebitda":
-      return fmtX(s.evEbitda);
+      // EV present but multiple invalid → negative EBITDA (n/m); no EV → n/a.
+      if (s.evEbitda !== null) return fmtX(s.evEbitda) ?? N_M;
+      return s.enterpriseValue !== null ? N_M : N_A;
     case "ev_ebit":
-      return s.enterpriseValue !== null && r.ebit !== null
-        ? r.ebit > 0
-          ? fmtX(s.enterpriseValue / r.ebit)
-          : N_M
-        : N_A;
-    case "p_tbv":
+      if (s.enterpriseValue === null || r.ebit === null) return N_A;
+      return r.ebit > 0 ? (fmtX(s.enterpriseValue / r.ebit) ?? N_M) : N_M;
+    case "p_tbv": {
       // Rule: 'neg' when tangible equity is negative — a real signal, not a gap.
       if (s.tangibleBookPerShare !== null && s.tangibleBookPerShare <= 0) return "neg";
-      return fmtX(s.pTangibleBook);
+      // Rule: P/TBV can never be below P/B — if it is, the book data is bad.
+      if (s.pTangibleBook !== null && s.pb !== null && s.pTangibleBook < s.pb * 0.95) return N_A;
+      return fmtX(s.pTangibleBook) ?? N_A;
+    }
     case "p_b":
-      return fmtX(s.pb);
+      return fmtX(s.pb) ?? N_A;
     case "p_s":
-      return fmtX(s.ps);
+      // De-minimis revenue → n/m per the metric rule; missing → n/a.
+      if (s.revenuePerShareTTM !== null && s.revenuePerShareTTM <= 0) return N_M;
+      return fmtX(s.ps) ?? N_A;
     case "ev_s":
-      return s.enterpriseValue !== null && r.revenue !== null && r.revenue > 0
-        ? fmtX(s.enterpriseValue / r.revenue)
-        : N_M;
+      if (s.enterpriseValue === null || r.revenue === null) return N_A;
+      return r.revenue > 0 ? (fmtX(s.enterpriseValue / r.revenue) ?? N_M) : N_M;
     case "fcf_yield": {
-      // Sanity from the file: FCF above EBITDA is almost always a data error.
-      if (s.fcfYield === null) return N_M;
-      return fmtPct(s.fcfYield);
+      if (s.fcfYield === null) return N_A;
+      // Rule: FCF above EBITDA is almost always a data error.
+      if (
+        s.fcfPerShare !== null &&
+        r.shares !== null &&
+        r.shares > 0 &&
+        s.ebitdaMargin !== null &&
+        r.revenue !== null &&
+        r.revenue > 0 &&
+        s.fcfPerShare * r.shares > Math.max(0, s.ebitdaMargin * r.revenue) * 1.2
+      ) {
+        return N_A; // fails the FCF-vs-EBITDA sanity check — bad row data
+      }
+      return fmtPct(s.fcfYield) ?? N_A;
     }
     case "div_yield":
-      return s.divYield !== null ? fmtPct(Math.max(0, s.divYield)) : "0.0%";
+      // Absent dividend data is n/a — never a fabricated 0.0%. Negative is a
+      // data error (n/m). TTM totals may include specials; footnoted globally.
+      if (s.divYield === null) return N_A;
+      if (s.divYield < 0) return N_M;
+      return fmtPct(s.divYield) ?? N_A;
     case "rev_growth_3y":
-      if (s.revenueCagr3y !== null) return fmtPct(s.revenueCagr3y);
+      if (s.revenueCagr3y !== null) return fmtPct(s.revenueCagr3y) ?? N_A;
       return s.revenueGrowth !== null ? `${fmtPct(s.revenueGrowth)} (YoY)` : N_A;
     case "roe":
-      return fmtPct(s.roe);
+      return fmtPct(s.roe) ?? N_A;
     case "rote":
       return s.roe !== null &&
         s.bookValuePerShare !== null &&
         s.tangibleBookPerShare !== null &&
         s.tangibleBookPerShare > 0
-        ? fmtPct(s.roe * (s.bookValuePerShare / s.tangibleBookPerShare))
+        ? (fmtPct(s.roe * (s.bookValuePerShare / s.tangibleBookPerShare)) ?? N_A)
         : N_A;
     case "nd_ebitda":
+      // "net cash" ONLY when net debt itself is provably negative; a negative
+      // RATIO can also mean negative EBITDA on a levered name (n/m).
+      if (s.netDebt !== null && s.netDebt < 0) return "net cash";
       if (s.netDebtToEbitda === null) return N_A;
-      return s.netDebtToEbitda < 0 ? "net cash" : `${s.netDebtToEbitda.toFixed(1)}x`;
+      if (s.netDebtToEbitda < 0) return s.netDebt === null ? N_M : "net cash";
+      return `${s.netDebtToEbitda.toFixed(1)}x`;
     case "net_cash":
-      return s.netDebt !== null ? fmtMoney(-s.netDebt, s.repCur) : N_A;
+      return s.netDebt !== null ? (fmtMoney(-s.netDebt, s.repCur) ?? N_A) : N_A;
     case "p_ffo": {
       const mcapRep = s.marketCapReported;
       if (mcapRep !== null && r.netIncome !== null && r.da !== null && r.netIncome + r.da > 0) {
-        return `${fmtX(mcapRep / (r.netIncome + r.da))}*`; // * = approx, footnoted
+        const v = fmtX(mcapRep / (r.netIncome + r.da));
+        return v ? `${v}*` : N_M; // * = approx, footnoted
       }
       return N_A;
     }
@@ -208,6 +239,7 @@ async function peerRowData(peer: PeerComp): Promise<RowData | null> {
       revenue: num(incRows[0]?.revenue),
       netIncome: num(incRows[0]?.netIncome),
       da: num(incRows[0]?.depreciationAndAmortization),
+      shares: num(incRows[0]?.weightedAverageShsOutDil) ?? num(incRows[0]?.weightedAverageShsOut),
       facts: new Map(),
     };
   } catch (e) {
@@ -229,27 +261,26 @@ function isNonEarner(r: RowData, hasStageRule: boolean): boolean {
 }
 
 /**
- * Clean anchors per the group's clean_comp_rule, applied structurally: with a
- * stage rule, an anchor shares the subject's producing stage AND primary
- * product; without one, any peer with real multiples anchors. The writer
- * cites re-rating ranges from anchors ONLY.
+ * Clean anchors, applied STRUCTURALLY only where the group gives us structure
+ * (a stage rule): an anchor shares the subject's producing stage AND primary
+ * product. Groups without a stage dimension get NO structural marks — their
+ * clean_comp_rule is prose (match geography/model/route/...) that the writer
+ * applies via the rule text passed alongside the table. Marking everything
+ * clean would bless exactly the mis-anchors the rule exists to prevent.
  */
 function isCleanAnchor(r: RowData, subject: RowData, group: GroupDef): boolean {
   if (r.self) return false;
-  if (group.stage_rule) {
-    const stage = (stageOf(r) ?? "").toLowerCase();
-    if (!stage.includes("produc")) return false;
-    const p1 = (productOf(r) ?? "").toLowerCase();
-    const p2 = (productOf(subject) ?? "").toLowerCase();
-    if (p1 && p2 && p1 !== p2) {
-      // "gold" vs "gold+copper" → not an anchor; single-token containment OK.
-      const t1 = p1.split(/[+/,\s]+/).filter(Boolean).sort().join("+");
-      const t2 = p2.split(/[+/,\s]+/).filter(Boolean).sort().join("+");
-      if (t1 !== t2) return false;
-    }
-    return true;
+  if (!group.stage_rule) return false;
+  const stage = (stageOf(r) ?? "").toLowerCase();
+  if (!stage.includes("produc")) return false;
+  const p1 = (productOf(r) ?? "").toLowerCase();
+  const p2 = (productOf(subject) ?? "").toLowerCase();
+  if (p1 && p2 && p1 !== p2) {
+    // "gold" vs "gold+copper" → not an anchor; single-token containment OK.
+    const t1 = p1.split(/[+/,\s]+/).filter(Boolean).sort().join("+");
+    const t2 = p2.split(/[+/,\s]+/).filter(Boolean).sort().join("+");
+    if (t1 !== t2) return false;
   }
-  // No stage dimension: a peer with at least two meaningful multiples anchors.
   return true;
 }
 
@@ -263,10 +294,11 @@ export async function buildCompTable(args: {
       | { industry?: string; sector?: string; companyName?: string }
       | undefined;
     const resolution = resolveMetricGroup(profile?.industry, profile?.sector);
-    if (resolution.via === "default" && profile?.industry) {
-      // Per the file: log the unmapped industry instead of silently defaulting.
+    if (resolution.via !== "industry" && profile?.industry) {
+      // Per the file: log ANY unmapped industry (sector fallback included) so
+      // the mapping can be extended, instead of silently defaulting.
       await logEvent("comp_group_unmapped", {
-        payload: { ticker: args.ticker, industry: profile.industry, sector: profile?.sector },
+        payload: { ticker: args.ticker, industry: profile.industry, sector: profile?.sector, resolvedVia: resolution.via },
       });
     }
     const group = resolution.group;
@@ -285,6 +317,7 @@ export async function buildCompTable(args: {
       revenue: num(incRows[0]?.revenue),
       netIncome: num(incRows[0]?.netIncome),
       da: num(incRows[0]?.depreciationAndAmortization),
+      shares: num(incRows[0]?.weightedAverageShsOutDil) ?? num(incRows[0]?.weightedAverageShsOut),
       facts: new Map(),
     };
 
@@ -294,8 +327,15 @@ export async function buildCompTable(args: {
       (r): r is RowData => r !== null,
     );
 
+    // Candidate columns: the group's list PLUS optional sourced-only extras
+    // (P/NAV, EV/oz) — the latter render only when every row has a source.
+    const candidateColumns = [
+      ...group.columns,
+      ...(group.optional_if_sourced ?? []).filter((c) => !group.columns.includes(c)),
+    ];
+
     // Filing facts + stage/product tags for every row, cached and shared.
-    const filingMetricKeys = group.columns.filter((c) => {
+    const filingMetricKeys = candidateColumns.filter((c) => {
       const kind = METRICS[c]?.kind;
       return kind === "filing" || kind === "sourced_only";
     });
@@ -313,21 +353,36 @@ export async function buildCompTable(args: {
       r.facts = facts.get(r.ticker.toUpperCase()) ?? new Map();
     }
 
-    // Column selection: group's list; drop sourced_only columns lacking a
-    // source anywhere; drop filing columns that are n/a in EVERY row; then
-    // drop per the group's tightness order down to 5 metric columns.
-    let columns = group.columns.filter((key) => METRICS[key]);
+    // Column selection: candidates; sourced_only columns need a source on
+    // EVERY row; then drop any column that would be n/a in every row (an
+    // all-empty column is noise, whatever its kind); then the group's
+    // tightness order caps the table at 6 metric columns (the file's "aim
+    // for 4-6" — six renders fine at this layout's widths).
     const allRows = [subject, ...peerRows];
+    let columns = candidateColumns.filter((key) => METRICS[key]);
     columns = columns.filter((key) => {
       const def = METRICS[key];
-      if (def.kind !== "filing" && def.kind !== "sourced_only") return true;
-      const values = allRows.map((r) => r.facts.get(key)?.value ?? N_A);
-      if (def.kind === "sourced_only") return values.every((v) => v !== N_A);
-      return values.some((v) => v !== N_A);
+      if (def.kind === "sourced_only") {
+        return allRows.every((r) => {
+          const f = r.facts.get(key);
+          return f && f.value !== N_A && f.source;
+        });
+      }
+      if (def.kind === "filing") {
+        return allRows.some((r) => (r.facts.get(key)?.value ?? N_A) !== N_A);
+      }
+      return true;
+    });
+    // Pre-render pass to drop computed columns that are n/a in every row.
+    const probeNonEarner = new Map(allRows.map((r) => [r.ticker, isNonEarner(r, Boolean(group.stage_rule))]));
+    columns = columns.filter((key) => {
+      const def = METRICS[key];
+      if (def.kind === "filing" || def.kind === "sourced_only") return true;
+      return allRows.some((r) => computedCell(key, r, probeNonEarner.get(r.ticker) ?? false) !== N_A);
     });
     const dropOrder = group.drop_first_if_tight ?? [];
     let di = 0;
-    while (columns.length > 5 && di < dropOrder.length) {
+    while (columns.length > 6 && di < dropOrder.length) {
       columns = columns.filter((c) => c !== dropOrder[di]);
       di++;
     }
@@ -349,7 +404,9 @@ export async function buildCompTable(args: {
       });
       const stage = stageOf(r);
       const product = productOf(r);
-      const tag = [stage, product].filter(Boolean).join(" · ") || null;
+      const baseTag = [stage, product].filter(Boolean).join(" · ");
+      // † marks rows whose FX pair was unavailable (FMP-converted, refresh-epoch).
+      const tag = [baseTag, r.s.priceFresh ? "" : "†"].filter(Boolean).join(" ") || null;
       return {
         name: r.name,
         ticker: r.ticker,
@@ -363,6 +420,8 @@ export async function buildCompTable(args: {
     if (rows.length < 3) return null; // subject + <2 peers → too thin to be honest
 
     // Anchor note for the writer: the multiples it may cite for re-rating.
+    // Structural anchors exist only for stage-rule groups; everywhere else the
+    // group's prose clean_comp_rule travels with the table for the writer to apply.
     const anchorRows = rows.filter((r) => r.cleanAnchor);
     const primaryMultipleKey = columns.find((k) => EARNINGS_MULTIPLES.has(k) || k === "p_tbv");
     let cleanAnchorNote: string | null = null;
@@ -376,8 +435,16 @@ export async function buildCompTable(args: {
     }
 
     const columnDefs = columns.map((key) => ({ key, label: METRICS[key].label }));
-    const footnotes = [...footnoteSet.values()].slice(0, 6);
-    if (columns.includes("p_ffo")) footnotes.unshift("*P/FFO approximated as NI + D&A where the company does not report FFO.");
+    const footnotes = [...footnoteSet.values()].slice(0, 10);
+    if (columns.includes("div_yield")) {
+      footnotes.unshift("Div Yield is trailing-twelve-month and may include special dividends.");
+    }
+    if (columns.includes("p_ffo")) {
+      footnotes.unshift("*P/FFO approximated as NI + D&A where the company does not report FFO.");
+    }
+    if (rows.some((r) => r.tag?.includes("†"))) {
+      footnotes.unshift("† FX pair unavailable — multiples are FMP's own conversion at its last refresh, not today's close.");
+    }
 
     // The block writer AND verifier receive — same table, same epoch.
     const header = ["Company", ...columnDefs.map((c) => c.label)].join(" | ");
@@ -387,10 +454,16 @@ export async function buildCompTable(args: {
         ...r.cells,
       ].join(" | "),
     );
+    const anchorGuidance = group.stage_rule
+      ? cleanAnchorNote
+        ? `\nCLEAN RE-RATING ANCHORS: ${cleanAnchorNote}. When citing a peer multiple or range for the re-rating case, use ONLY these clean comps — never ramp-ups, developers, or different-product names, whose multiples say nothing about the subject's re-rating.`
+        : `\nNO CLEAN RE-RATING ANCHORS in this peer set (no producing same-product peer with meaningful multiples) — do NOT cite a peer multiple range for the re-rating case.`
+      : group.clean_comp_rule
+        ? `\nCLEAN-COMP RULE for this sector: ${group.clean_comp_rule} Apply it before citing any peer multiple for the re-rating case; when a peer fails it, say so or leave that peer out of the range.`
+        : "";
     const textForPrompt = `<peer_comps note="Sector-aware comp table (${group.label}), computed at TODAY's close from the same snapshot as every other figure — quote these verbatim. 'n/m' = not meaningful (non-earner or negative), 'n/a' = not disclosed.">
 ${header}
-${lines.join("\n")}
-${cleanAnchorNote ? `\nCLEAN RE-RATING ANCHORS: ${cleanAnchorNote}. When citing a peer multiple or range for the re-rating case, use ONLY these clean comps — never ramp-ups, developers, or different-product names, whose multiples say nothing about the subject's re-rating.` : ""}
+${lines.join("\n")}${anchorGuidance}
 </peer_comps>`;
 
     return {

@@ -61,6 +61,10 @@ export interface FiguresSnapshot {
   cashPerShare: number | null;
   fcfPerShare: number | null;
   eps: number | null;
+  // Raw TTM per-share inputs — lets consumers distinguish "data missing"
+  // (n/a) from "not meaningful" (n/m: present but negative/de-minimis).
+  epsTTM: number | null;
+  revenuePerShareTTM: number | null;
   yearLow: number | null;
   yearHigh: number | null;
   revenueGrowth: number | null; // YoY
@@ -116,14 +120,22 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
 
   const listingCode = typeof profile.currency === "string" ? profile.currency : "";
   const { major, penceFactor } = listingMajor(listingCode);
+  // Reported currency from wherever a statement-shaped row declares it. If NO
+  // source declares one, we must NOT assume the listing currency — that
+  // assumption on a USD-reporting/GBp-quoted name is exactly the THX.L bug.
+  // Unknown reported currency → the safe fallback path (FMP's own converted
+  // TTM ratios, priceFresh=false).
+  const cur = (v: unknown) => (typeof v === "string" && v ? v : null);
   const reported =
-    (typeof inc0.reportedCurrency === "string" && inc0.reportedCurrency) ||
-    (typeof ra.reportedCurrency === "string" && ra.reportedCurrency) ||
-    major; // no statements in sight → assume listing currency
+    cur(inc0.reportedCurrency) ??
+    cur(ra.reportedCurrency) ??
+    cur(ka.reportedCurrency) ??
+    cur(rt.reportedCurrency) ??
+    cur(kt.reportedCurrency);
 
   const listCur = curPrefix(listingCode);
   const listCurMajor = curPrefix(major);
-  const repCur = curPrefix(reported);
+  const repCur = curPrefix(reported ?? major);
 
   const price = n(quote.price); // listing units (possibly pence)
   const marketCap = n(quote.marketCap); // listing MAJOR units (FMP normalizes)
@@ -131,7 +143,7 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
   // One explicit conversion: today's price and market cap in REPORTED terms.
   const fx = reported && major ? await getFxRate(reported, major) : null; // 1 reported = fx major
   const priceFresh = fx !== null;
-  const priceRep = price !== null && fx !== null ? price / penceFactor / fx : null;
+  const priceRep = price !== null && price > 0 && fx !== null ? price / penceFactor / fx : null;
   const mcapRep = marketCap !== null && fx !== null ? marketCap / fx : null;
 
   // Price-dependent ratios: recompute at today's close in reported currency;
@@ -197,9 +209,24 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
     return evOld;
   })();
 
+  // Net debt must come from PERIOD-CONSISTENT pairs: TTM ratio × TTM EBITDA
+  // (derived from kt's own EV/EBITDA pair, same epoch), else annual ratio ×
+  // annual EBITDA. Mixing a TTM ratio with fiscal-year EBITDA mis-scales the
+  // figure and flips its sign when the two EBITDAs straddle zero.
   const ndToEbitda = n(kt.netDebtToEBITDATTM) ?? n(ka.netDebtToEBITDA);
-  const ebitda0 = n(inc0.ebitda);
-  const netDebt = ndToEbitda !== null && ebitda0 !== null ? ndToEbitda * ebitda0 : null;
+  const netDebt = ((): number | null => {
+    const ndTTM = n(kt.netDebtToEBITDATTM);
+    const evOld = n(kt.enterpriseValueTTM);
+    const evx = n(kt.evToEBITDATTM);
+    if (ndTTM !== null && evOld !== null && evx !== null && evx !== 0) {
+      const ebitdaTTM = evOld / evx;
+      if (ebitdaTTM > 0) return ndTTM * ebitdaTTM;
+    }
+    const ndAnnual = n(ka.netDebtToEBITDA);
+    const ebitda0 = n(inc0.ebitda);
+    if (ndAnnual !== null && ebitda0 !== null && ebitda0 > 0) return ndAnnual * ebitda0;
+    return null; // negative/unknown EBITDA → net debt not inferable this way
+  })();
 
   const growth = (a: unknown, b: unknown): number | null => {
     const v0 = n(a);
@@ -262,6 +289,8 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
     cashPerShare: n(rt.cashPerShareTTM) ?? n(ra.cashPerShare),
     fcfPerShare: n(rt.freeCashFlowPerShareTTM) ?? n(ra.freeCashFlowPerShare),
     eps: n(inc0.eps),
+    epsTTM: n(rt.netIncomePerShareTTM),
+    revenuePerShareTTM: n(rt.revenuePerShareTTM),
     yearLow: n(quote.yearLow),
     yearHigh: n(quote.yearHigh),
     revenueGrowth: growth(inc0.revenue, inc1?.revenue),

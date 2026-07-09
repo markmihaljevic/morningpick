@@ -67,6 +67,31 @@ export async function getFilingFacts(args: {
   }
   if (gaps.length === 0) return out;
 
+  // Cross-worker research claim (same pattern as the research-brief lock):
+  // concurrent workers on the same subject must not both pay the web-search
+  // call — and must not race divergent answers into the shared cache. The
+  // loser waits for the winner, then re-reads; still-missing cells go n/a.
+  const lockKey = `filing-facts:${symbols[0]}:${new Date().toISOString().slice(0, 10)}`;
+  const { error: lockError } = await db()
+    .from("fmp_cache")
+    .insert({ cache_key: lockKey, payload: { at: new Date().toISOString() } });
+  if (lockError) {
+    await new Promise((r) => setTimeout(r, 25_000));
+    try {
+      const { data: retry } = await db()
+        .from("filing_facts")
+        .select("symbol, metric, value, source")
+        .in("symbol", symbols)
+        .in("metric", wantedMetrics);
+      for (const row of retry ?? []) {
+        out.get(row.symbol)?.set(row.metric, { value: row.value, source: row.source });
+      }
+    } catch {
+      /* fall through with whatever we have */
+    }
+    return out;
+  }
+
   try {
     const researched = await researchFacts(gaps, args.metrics, args.stageRule, args.industry);
     const rows: {
@@ -87,7 +112,8 @@ export async function getFilingFacts(args: {
       }
     }
     if (rows.length > 0) {
-      await db().from("filing_facts").upsert(rows, { onConflict: "symbol,metric" });
+      const { error } = await db().from("filing_facts").upsert(rows, { onConflict: "symbol,metric" });
+      if (error) console.error("filing_facts upsert failed (next note re-researches):", error.message);
     }
   } catch (e) {
     // Fail open: the table ships with "n/a" filing cells rather than blocking.

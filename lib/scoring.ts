@@ -84,8 +84,10 @@ export function priceScale(
   // ratios rather than a guessed rescale. (The memo layer converts with real
   // FX rates — lib/figures.ts; the scorer only ranks, so approximate is fine.)
   if (f > 0.75 && f < 1.35) return { scale: 1, fresh: true }; // same currency; price moved
-  if (f > 92 && f < 109) return { scale: 100, fresh: true }; // GBp quote vs GBP per-share
-  if (f > 1 / 109 && f < 1 / 92) return { scale: 0.01, fresh: true }; // the reverse
+  // (95,107): CHF-reported GBp names sit at ~93 and EUR-reported at ~86 —
+  // both must fall through to the FX-mismatch path, not be "fixed" as pence.
+  if (f > 95 && f < 107) return { scale: 100, fresh: true }; // GBp quote vs GBP per-share
+  if (f > 1 / 107 && f < 1 / 95) return { scale: 0.01, fresh: true }; // the reverse
   return { scale: 1, fresh: false }; // FX mismatch — use FMP's own ratios
 }
 
@@ -236,7 +238,11 @@ export function scoreCandidates(
     let evEbitda = n(row.evToEBITDATTM);
     const evOld = n(row.enterpriseValueTTM);
     const mcapOld = n(row.marketCap);
-    if (evEbitda !== null && evEbitda > 0 && evOld !== null && mcapOld !== null && mcapOld > 0) {
+    // Re-anchor EV to today's market cap ONLY when the currency check said
+    // same-currency: the pool's cap is listing-major while the bulk row is
+    // reported-currency, and mixing them (a GBp/USD name) skews the multiple
+    // ~35% — verified live on THX.L. FX-mismatch names keep FMP's own value.
+    if (fresh && evEbitda !== null && evEbitda > 0 && evOld !== null && mcapOld !== null && mcapOld > 0) {
       const ebitda = evOld / evEbitda;
       if (ebitda > 0) evEbitda = (evOld - mcapOld + mcap) / ebitda;
     }
