@@ -90,20 +90,6 @@ async function main() {
   });
 
   const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
-  const cover = await writeCoverNote({ fullNoteMarkdown: memo.markdown, ticker: target.ticker, meta: memo.meta });
-  const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
-  const coverSubject = cover?.subject || `${bareTicker(target.ticker)}: ${hook || "an update"}`;
-  const coverBody =
-    cover?.body ||
-    `${memo.meta?.one_liner ?? "An update on a name I flagged for you."}\n\nThe full write-up and a one-page fact sheet are attached.`;
-
-  const html = renderMemoEmail({
-    coverNote: coverBody,
-    signOffName: config().ANALYST_NAME,
-    unsubscribeToken: subscriber.unsubscribe_token,
-    preparedFor: subscriber.email,
-    dateLine,
-  });
   const [tearSheet, fullReport] = await Promise.all([
     buildTearSheet({
       ticker: target.ticker,
@@ -114,9 +100,32 @@ async function main() {
       meta: memo.meta,
       fullNoteMarkdown: memo.markdown,
       verifySources: memo.sources,
+      peerComps: compTable?.textForPrompt,
     }),
     buildFullReport({ markdown: memo.markdown, ticker: target.ticker, companyName: original?.company_name ?? undefined, dateLine, data, meta: memo.meta, sources: memo.sources, compTable }),
   ]);
+  // Cover note AFTER the PDFs so it describes what is actually attached.
+  const cover = await writeCoverNote({
+    fullNoteMarkdown: memo.markdown,
+    ticker: target.ticker,
+    meta: memo.meta,
+    attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
+  });
+  const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
+  const coverSubject = cover?.subject || `${bareTicker(target.ticker)}: ${hook || "an update"}`;
+  const coverBody =
+    cover?.body ||
+    `${memo.meta?.one_liner ?? "An update on a name I flagged for you."}${
+      fullReport !== null ? "\n\nThe full report is attached." : ""
+    }`;
+
+  const html = renderMemoEmail({
+    coverNote: coverBody,
+    signOffName: config().ANALYST_NAME,
+    unsubscribeToken: subscriber.unsubscribe_token,
+    preparedFor: subscriber.email,
+    dateLine,
+  });
   const bare = bareTicker(target.ticker);
   const attachments: { filename: string; content: Buffer }[] = [];
   if (tearSheet) attachments.push({ filename: `${bare}-one-pager.pdf`, content: tearSheet });

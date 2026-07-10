@@ -24,6 +24,9 @@ export async function buildTearSheet(args: {
   meta: MemoMeta | null;
   fullNoteMarkdown: string;
   verifySources?: MemoSource[];
+  /** The comp table's prompt block — verification ground truth if a peer
+   * figure slips onto the page (which the structural gate also bans). */
+  peerComps?: string;
 }): Promise<Buffer | null> {
   try {
     const p = (Array.isArray(args.data.profile) ? args.data.profile[0] : args.data.profile) as
@@ -45,6 +48,8 @@ export async function buildTearSheet(args: {
       figures,
       data: args.data,
       verifySources: args.verifySources ?? [],
+      peers: (args.data.peers ?? []).map((pe) => ({ symbol: pe.symbol, name: pe.name })),
+      peerComps: args.peerComps,
     });
     if (!pageOne) {
       console.warn(`No page-one memo for ${args.ticker}; sending the full report alone.`);
@@ -61,6 +66,7 @@ export async function buildTearSheet(args: {
         meta: args.meta,
         strip,
         pageOne,
+        vendorEv: !snapshot.evFromBalanceSheet,
       }) as React.ReactElement<DocumentProps>,
     );
     return Buffer.from(buffer);

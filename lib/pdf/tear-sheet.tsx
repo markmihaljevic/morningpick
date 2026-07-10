@@ -74,6 +74,8 @@ export interface TearSheetArgs {
   meta?: MemoMeta | null;
   strip: KeyStat[];
   pageOne: PageOneMemo;
+  /** True → no usable balance sheet; the * on EV cells gets its footnote. */
+  vendorEv?: boolean;
 }
 
 /** One titled serif paragraph — bold lead-in, justified body, Marks register. */
@@ -135,9 +137,12 @@ export function TearSheet(args: TearSheetArgs) {
         <View style={S.footer} fixed>
           <Text>
             Full workings, the price chart, peer comparisons, scenarios, and sources: the attached
-            full report. Data as of the {args.dateLine} close; balance-sheet figures as of the latest
-            reported statement. Not investment advice — AI-generated, for information only, and may
-            contain errors. Morningpick · morningpick.ai
+            full report. Data as of the {args.dateLine} close
+            {args.vendorEv
+              ? "; *EV-family figures are vendor-derived — no recent balance sheet was available"
+              : "; balance-sheet figures as of the latest reported statement"}
+            . Not investment advice — AI-generated, for information only, and may contain errors.
+            Morningpick · morningpick.ai
           </Text>
         </View>
       </Page>

@@ -229,21 +229,42 @@ async function main() {
 
   const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
-  // Distil the verified note into the short cover email; the full argument ships attached.
-  const willAttach = memoKind !== "review";
+  const [tearSheet, fullReport] =
+    memoKind === "review"
+      ? [null, null]
+      : await Promise.all([
+          buildTearSheet({
+            ticker,
+            companyName,
+            firstName: greetingName(subscriber.email, subscriber.first_name),
+            dateLine,
+            data,
+            meta: memo.meta,
+            fullNoteMarkdown: memo.markdown,
+            verifySources: memo.sources,
+            peerComps: compTable?.textForPrompt,
+          }),
+          buildFullReport({ markdown: memo.markdown, ticker, companyName, dateLine, data, meta: memo.meta, sources: memo.sources, compTable }),
+        ]);
+  console.error(
+    `Attachments: one-pager ${tearSheet ? `${(tearSheet.length / 1024).toFixed(0)} KB` : "none"}, ` +
+      `full report ${fullReport ? `${(fullReport.length / 1024).toFixed(0)} KB` : "none"}`,
+  );
+
+  // Cover note AFTER the PDFs so it describes what is actually attached.
   const cover = await writeCoverNote({
     fullNoteMarkdown: memo.markdown,
     ticker,
     meta: memo.meta,
-    hasAttachments: willAttach,
+    attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
   });
   const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
   const coverSubject = cover?.subject || `${bareTicker(ticker)}: ${hook || "today's idea"}`;
   const coverBody =
     cover?.body ||
     `${memo.meta?.one_liner ?? "My latest idea for you."}${
-      willAttach
-        ? "\n\nThe full write-up and a one-page fact sheet are attached — the complete argument, the numbers, and the sources are all in there."
+      fullReport !== null
+        ? "\n\nThe full report is attached — the complete argument, the numbers, and the sources are all in there."
         : ""
     }`;
   console.error(`Cover note: ${cover ? `${cover.body.split(/\s+/).length} words` : "FALLBACK"} — subject "${coverSubject}"`);
@@ -263,26 +284,6 @@ async function main() {
     console.error(`HTML written to ${htmlPath}`);
   }
 
-  const [tearSheet, fullReport] =
-    memoKind === "review"
-      ? [null, null]
-      : await Promise.all([
-          buildTearSheet({
-            ticker,
-            companyName,
-            firstName: greetingName(subscriber.email, subscriber.first_name),
-            dateLine,
-            data,
-            meta: memo.meta,
-            fullNoteMarkdown: memo.markdown,
-            verifySources: memo.sources,
-          }),
-          buildFullReport({ markdown: memo.markdown, ticker, companyName, dateLine, data, meta: memo.meta, sources: memo.sources, compTable }),
-        ]);
-  console.error(
-    `Attachments: one-pager ${tearSheet ? `${(tearSheet.length / 1024).toFixed(0)} KB` : "none"}, ` +
-      `full report ${fullReport ? `${(fullReport.length / 1024).toFixed(0)} KB` : "none"}`,
-  );
   const bare = bareTicker(ticker);
   const attachments: { filename: string; content: Buffer }[] = [];
   if (tearSheet) attachments.push({ filename: `${bare}-one-pager.pdf`, content: tearSheet });

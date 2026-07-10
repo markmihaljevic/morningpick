@@ -63,14 +63,20 @@ export async function writeCoverNote(args: {
   fullNoteMarkdown: string;
   ticker: string;
   meta: MemoMeta | null;
-  /** False on notes that ship without PDFs (reviews) — no "attached" line. */
-  hasAttachments?: boolean;
+  /** What is ACTUALLY attached — the closing line must never promise a PDF
+   * that failed its gate. Omitted → assume both (legacy callers). */
+  attachments?: { onePager: boolean; fullReport: boolean };
 }): Promise<CoverNote | null> {
   const cfg = config();
+  const att = args.attachments ?? { onePager: true, fullReport: true };
   const attachNote =
-    args.hasAttachments === false
+    !att.onePager && !att.fullReport
       ? "This email has NO attachments — do not mention any attached one-pager or report."
-      : "Attachments ARE included (one-pager + full report) — close by noting they're attached.";
+      : att.onePager && att.fullReport
+        ? "Attachments ARE included (the one-page memo + the full report) — close by noting they're attached."
+        : att.fullReport
+          ? "ONLY the full report is attached (no one-pager today) — the closing line mentions the full report alone."
+          : "ONLY the one-page memo is attached — the closing line mentions it alone.";
   try {
     const res = await anthropic().messages.create({
       model: cfg.MEMO_MODEL,

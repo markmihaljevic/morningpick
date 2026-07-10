@@ -41,6 +41,9 @@ export interface FiguresSnapshot {
   cashAndDeposits: number | null; // cash + short-term investments
   tangibleBookAbs: number | null; // total equity − goodwill − intangibles
   ebitdaTTM: number | null; // derived from kt's own EV/EBITDA pair — one epoch
+  /** False → no usable balance sheet; EV figures degrade to vendor data and
+   * every surface that prints them must say so. */
+  evFromBalanceSheet: boolean;
   priceFresh: boolean; // false → FX unavailable, FMP's converted TTM ratios used
   pe: number | null;
   evEbitda: number | null;
@@ -150,12 +153,19 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
   // TTM ratios, priceFresh=false).
   const cur = (v: unknown) => (typeof v === "string" && v ? v : null);
   const reported =
-    cur(bs?.reportedCurrency) ??
     cur(inc0.reportedCurrency) ??
     cur(ra.reportedCurrency) ??
     cur(ka.reportedCurrency) ??
     cur(rt.reportedCurrency) ??
-    cur(kt.reportedCurrency);
+    cur(kt.reportedCurrency) ??
+    cur(bs?.reportedCurrency);
+  // Currency-consistency guard: if the balance sheet declares a DIFFERENT
+  // currency than the income/TTM rows (reporting-currency switch, vendor
+  // inconsistency), its absolutes cannot be mixed with the per-share math —
+  // drop the statement and fall back rather than print cross-currency EV.
+  const bsCurrency = cur(bs?.reportedCurrency);
+  const bsUsable = bs !== null && (!bsCurrency || !reported || bsCurrency === reported);
+  const bsSafe = bsUsable ? bs : null;
 
   const listCur = curPrefix(listingCode);
   const listCurMajor = curPrefix(major);
@@ -191,20 +201,23 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
   // netDebt field counts only the cash LINE — it missed the US$90.7M Monument
   // held in short-term deposits — so net cash, EV, and tangible book are
   // assembled from the raw statement fields, never a vendor's precomputed one.
-  const balanceSheetDate = bs && typeof bs.date === "string" ? bs.date : null;
-  const totalDebt = n(bs?.totalDebt);
+  const balanceSheetDate = bsSafe && typeof bsSafe.date === "string" ? bsSafe.date : null;
+  const totalDebt = n(bsSafe?.totalDebt);
   const cashAndDeposits = ((): number | null => {
-    const cash = n(bs?.cashAndCashEquivalents);
-    const sti = n(bs?.shortTermInvestments);
-    if (cash === null && sti === null) return n(bs?.cashAndShortTermInvestments);
+    const cash = n(bsSafe?.cashAndCashEquivalents);
+    const sti = n(bsSafe?.shortTermInvestments);
+    if (cash === null && sti === null) return n(bsSafe?.cashAndShortTermInvestments);
     return (cash ?? 0) + (sti ?? 0);
   })();
   const tangibleBookAbs = ((): number | null => {
-    const equity = n(bs?.totalStockholdersEquity) ?? n(bs?.totalEquity);
+    const equity = n(bsSafe?.totalStockholdersEquity) ?? n(bsSafe?.totalEquity);
     if (equity === null) return null;
-    const gwPlusIntang =
-      n(bs?.goodwillAndIntangibleAssets) ?? (n(bs?.goodwill) ?? 0) + (n(bs?.intangibleAssets) ?? 0);
-    return equity - gwPlusIntang;
+    // FMP sometimes serves the combined field as 0 while the components carry
+    // real values — take the LARGER of combined vs sum, never let a zeroed
+    // combined field overstate tangible book (the page's headline multiple).
+    const combined = n(bsSafe?.goodwillAndIntangibleAssets) ?? 0;
+    const summed = (n(bsSafe?.goodwill) ?? 0) + (n(bsSafe?.intangibleAssets) ?? 0);
+    return equity - Math.max(combined, summed);
   })();
 
   const pb = over(rt.bookValuePerShareTTM, rt.priceToBookRatioTTM);
@@ -260,13 +273,20 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
 
   // True EV = market cap at today's close + net debt from the statement —
   // never a vendor's precomputed EV (whose netDebt misses deposit lines).
-  // Fallback: FMP's EV re-anchored to today's cap, entirely reported-currency.
+  // Degradation order keeps the TRUE net-debt piece as long as possible:
+  //   1. today's cap (converted) + statement net debt        [fresh + true]
+  //   2. kt's epoch cap + statement net debt (FX missing)    [stale + true]
+  //   3. FMP's EV re-anchored to today's cap (no statement)  [vendor netDebt]
+  const evFromBalanceSheet = totalDebt !== null && cashAndDeposits !== null;
   const enterpriseValue = ((): number | null => {
-    if (mcapRep !== null && totalDebt !== null && cashAndDeposits !== null) {
-      return mcapRep + totalDebt - cashAndDeposits;
+    if (mcapRep !== null && evFromBalanceSheet) {
+      return mcapRep + (totalDebt as number) - (cashAndDeposits as number);
     }
     const evOld = n(kt.enterpriseValueTTM);
     const mcapOld = n(kt.marketCap);
+    if (evFromBalanceSheet && mcapOld !== null) {
+      return mcapOld + (totalDebt as number) - (cashAndDeposits as number);
+    }
     if (evOld !== null && mcapOld !== null && mcapRep !== null) return evOld - mcapOld + mcapRep;
     return evOld;
   })();
@@ -275,13 +295,24 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
       const v = enterpriseValue / ebitdaTTM;
       return v > 0 ? v : null;
     }
-    // No usable EBITDA pair → FMP's converted multiple as the labeled fallback.
+    // Prefer the TRUE EV over annual EBITDA to a vendor multiple built on the
+    // cash-line-only netDebt — annual EBITDA is the honest denominator when
+    // the TTM pair is missing (thin small-cap coverage).
+    const ebitda0 = n(inc0.ebitda);
+    if (enterpriseValue !== null && evFromBalanceSheet && ebitda0 !== null && ebitda0 > 0) {
+      const v = enterpriseValue / ebitda0;
+      return v > 0 ? v : null;
+    }
     const evx = n(kt.evToEBITDATTM) ?? n(rt.enterpriseValueMultipleTTM);
     return evx !== null && evx > 0 ? evx : null;
   })();
 
   const ndToEbitda = ((): number | null => {
     if (netDebt !== null && ebitdaTTM !== null) return netDebt / ebitdaTTM;
+    const ebitda0 = n(inc0.ebitda);
+    if (netDebt !== null && evFromBalanceSheet && ebitda0 !== null && ebitda0 > 0) {
+      return netDebt / ebitda0;
+    }
     return n(kt.netDebtToEBITDATTM) ?? n(ka.netDebtToEBITDA);
   })();
 
@@ -324,6 +355,7 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
     cashAndDeposits,
     tangibleBookAbs,
     ebitdaTTM,
+    evFromBalanceSheet,
     priceFresh,
     pe,
     evEbitda,
@@ -420,9 +452,15 @@ export async function buildComputedFigures(data: TickerData): Promise<ComputedFi
   );
   // Market cap is in MAJOR units even when the price quotes in pence.
   push("Market cap", fmtMoney(s.marketCap, s.listCurMajor));
-  push("Enterprise value", fmtMoney(s.enterpriseValue, s.repCur));
+  // EV without a balance sheet is vendor-derived — say so where it prints, so
+  // the writer never asserts a "true EV" the statement never backed.
+  const evLabel = s.evFromBalanceSheet
+    ? "Enterprise value"
+    : "Enterprise value (vendor approximation — no recent balance sheet)";
+  push(evLabel, fmtMoney(s.enterpriseValue, s.repCur));
   if (s.netDebt !== null) {
-    push("Net debt", s.netDebt < 0 ? `net cash ${fmtMoney(-s.netDebt, s.repCur)}` : fmtMoney(s.netDebt, s.repCur));
+    const ndLabel = s.evFromBalanceSheet ? "Net debt" : "Net debt (vendor approximation)";
+    push(ndLabel, s.netDebt < 0 ? `net cash ${fmtMoney(-s.netDebt, s.repCur)}` : fmtMoney(s.netDebt, s.repCur));
   }
   push("Net debt / EBITDA", s.netDebtToEbitda !== null ? `${s.netDebtToEbitda.toFixed(2)}x` : null);
   // Balance-sheet components — the note names the statement date with these.

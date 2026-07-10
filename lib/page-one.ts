@@ -70,6 +70,44 @@ HARD RULES:
 - The risks section contains EXACTLY ONE sentence starting "I am wrong if", and ends with the dated catalyst.
 - The one-line handle: what it is and where it trades, e.g. "gold producer, TSX Venture".`;
 
+/**
+ * Structural gate (rule 3 is not a suggestion): word budget, exactly one
+ * "I am wrong if", a dated catalyst, and NO peer names on the page. Returns
+ * the violations as repair notes; empty = compliant.
+ */
+export function pageOneStructuralIssues(
+  memo: PageOneMemo,
+  peers: { symbol: string; name: string }[],
+): string[] {
+  const issues: string[] = [];
+  const sections = [memo.trade, memo.business, memo.valuation, memo.variant, memo.risks];
+  const words = sections.join(" ").split(/\s+/).filter(Boolean).length;
+  if (words > 500) issues.push(`Total length is ${words} words — the page allows 300-450. Cut, don't compress.`);
+  if (words < 220) issues.push(`Total length is ${words} words — too thin; the page wants 300-450.`);
+
+  const wrongIf = (memo.risks.match(/I am wrong if/g) ?? []).length;
+  if (wrongIf !== 1) {
+    issues.push(`The risks section must contain EXACTLY ONE sentence starting "I am wrong if" (found ${wrongIf}).`);
+  }
+  const dated =
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\b|\bQ[1-4]\b|\bH[12]\b|\bFY\s?20\d\d\b|\b\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i;
+  if (!dated.test(memo.risks)) {
+    issues.push("The risks section must end with a DATED catalyst (a month, quarter, or date).");
+  }
+
+  // No peer relatives on this page — peer names/tickers must not appear.
+  const text = sections.join(" ").toLowerCase();
+  for (const p of peers) {
+    const nameToken = p.name.split(/\s+/).slice(0, 2).join(" ").toLowerCase();
+    if (text.includes(p.symbol.toLowerCase()) || (nameToken.length > 5 && text.includes(nameToken))) {
+      issues.push(
+        `Peer "${p.name}" (${p.symbol}) appears on the page — NO peer relatives on page one; the comp table lives in the attached report.`,
+      );
+    }
+  }
+  return issues;
+}
+
 export async function writePageOneMemo(args: {
   fullNoteMarkdown: string;
   ticker: string;
@@ -81,6 +119,10 @@ export async function writePageOneMemo(args: {
   figures: ComputedFigure[];
   data: TickerData;
   verifySources: { url: string; title: string }[];
+  /** Peer names/tickers — banned from the page; scanned, not just prompted. */
+  peers?: { symbol: string; name: string }[];
+  /** The comp table block — ground truth if a peer figure slips through. */
+  peerComps?: string;
 }): Promise<PageOneMemo | null> {
   const cfg = config();
   const stripLine = args.strip.map((s) => `${s.label}: ${s.value}`).join(" | ");
@@ -94,7 +136,7 @@ export async function writePageOneMemo(args: {
 
   try {
     let repairNote = "";
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       const res = await anthropic().messages.create({
         model: cfg.MEMO_MODEL,
         max_tokens: 3000,
@@ -116,9 +158,21 @@ export async function writePageOneMemo(args: {
         risks: (parsed.risks ?? "").trim(),
       };
 
-      // Page one gets its own fact-check: it is the densest page in the
-      // client's hands. One repair round; on a second failure, no page one
-      // (the verified full report still ships) — never a wrong number.
+      // Structural gate FIRST (cheap, deterministic): rule 3's constraints
+      // are enforced in code, not just prompted.
+      const structural = pageOneStructuralIssues(memo, args.peers ?? []);
+      if (structural.length > 0) {
+        console.warn(`Page-one structural issues for ${args.ticker} (attempt ${attempt + 1}):`, structural);
+        repairNote =
+          `IMPORTANT — your previous draft broke the page's structure. Fix every item:\n` +
+          structural.map((i) => `- ${i}`).join("\n") +
+          "\n\n";
+        continue;
+      }
+
+      // Then the fact-check: this is the densest page in the client's hands.
+      // Repair rounds within the attempt budget; on final failure, no page
+      // one (the verified full report still ships) — never a wrong number.
       const pageText = [
         `# ${args.ticker} — page one`,
         `## The trade\n${memo.trade}`,
@@ -127,14 +181,20 @@ export async function writePageOneMemo(args: {
         `## The variant view\n${memo.variant}`,
         `## Risks and catalyst\n${memo.risks}`,
       ].join("\n\n");
-      const verification = await verifyMemo(pageText, args.data, args.verifySources, args.figures);
+      const verification = await verifyMemo(
+        pageText,
+        args.data,
+        args.verifySources,
+        args.figures,
+        args.peerComps,
+      );
       if (verification.passed) return memo;
       console.warn(
         `Page-one memo failed verification for ${args.ticker} (attempt ${attempt + 1}):`,
         verification.critical_issues,
       );
       repairNote =
-        `IMPORTANT — your previous draft contained factual errors. Fix each by using the exact strip/figures value, or cut the claim:\n` +
+        `IMPORTANT — a fact-checker disputed figures in your previous draft. For EACH disputed figure: DELETE it entirely — do not restate it, re-derive it, or replace it with a similar figure. The page must survive on the strip and computed figures alone; a shorter page beats a disputed number:\n` +
         verification.critical_issues.map((i) => `- "${i.claim}": ${i.problem}`).join("\n") +
         "\n\n";
     }

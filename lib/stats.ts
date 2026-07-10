@@ -10,8 +10,9 @@ export interface KeyStat {
  * The page-one stat strip (John's spec): Price, Market cap, P/TBV, P/E,
  * EV/EBITDA, FCF yield, Net cash — one row, small type, P/TBV always present
  * and always the FIRST multiple. Every figure from the one snapshot at the
- * day's close; EV and net cash are balance-sheet-true (never a vendor field).
- * The strip carries the precision; the prose rounds.
+ * day's close. EV and net cash are balance-sheet-true whenever a statement
+ * exists; when none does, the EV-family cells carry a * (vendor-derived) so
+ * the degradation is never silent. The strip carries the precision.
  */
 export async function buildStatStrip(data: TickerData): Promise<KeyStat[]> {
   const s = await buildSnapshot(data);
@@ -42,14 +43,17 @@ export async function buildStatStrip(data: TickerData): Promise<KeyStat[]> {
           : x(s.pTangibleBook, 2),
     },
     { label: "P/E", value: x(s.pe) },
-    { label: "EV/EBITDA", value: x(s.evEbitda) },
+    {
+      label: s.evFromBalanceSheet ? "EV/EBITDA" : "EV/EBITDA*",
+      value: x(s.evEbitda),
+    },
     {
       label: "FCF yield",
       value: s.fcfYield !== null ? `${(s.fcfYield * 100).toFixed(1)}%` : "n/a",
     },
     s.netDebt !== null && s.netDebt < 0
-      ? { label: "Net cash", value: money(-s.netDebt, s.repCur) }
-      : { label: "Net debt", value: money(s.netDebt, s.repCur) },
+      ? { label: s.evFromBalanceSheet ? "Net cash" : "Net cash*", value: money(-s.netDebt, s.repCur) }
+      : { label: s.evFromBalanceSheet ? "Net debt" : "Net debt*", value: money(s.netDebt, s.repCur) },
   ];
   return items;
 }

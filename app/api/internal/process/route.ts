@@ -475,23 +475,56 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       timeZone: "UTC",
     });
 
-    // The email is now a short cover note distilled from the verified full
-    // note; the full argument ships attached. Fail-open to a clean subject +
-    // one-liner if the distillation call errors.
-    const willAttach = memoKind !== "review" && config().ATTACH_TEARSHEET === "true";
+    // Build the attachments FIRST: page one can legitimately come back null
+    // (it must pass its own fact-check to ship), and the cover note must
+    // describe what is ACTUALLY attached — never promise a one-pager that
+    // failed its gate.
+    if (memoKind !== "review" && config().ATTACH_TEARSHEET === "true") {
+      [tearSheet, fullReport] = await Promise.all([
+        // Page one: the memo page, distilled from the verified note and
+        // fact-checked on its own; null (report-only send) if it can't pass.
+        buildTearSheet({
+          ticker,
+          companyName,
+          firstName: greetingName(subscriber.email, subscriber.first_name),
+          dateLine,
+          data,
+          meta: memo.meta,
+          fullNoteMarkdown: memo.markdown,
+          verifySources: memo.sources,
+          peerComps: compTable?.textForPrompt,
+        }),
+        // The report carries the full workings: chart, comps, scenarios.
+        buildFullReport({
+          markdown: memo.markdown,
+          ticker,
+          companyName,
+          dateLine,
+          data,
+          meta: memo.meta,
+          sources: memo.sources,
+          compTable,
+        }),
+      ]);
+    }
+
+    // The email is a short cover note distilled from the verified full note.
+    // Fail-open to a clean subject + one-liner if the distillation errors.
     const cover = await writeCoverNote({
       fullNoteMarkdown: memo.markdown,
       ticker,
       meta: memo.meta,
-      hasAttachments: willAttach,
+      attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
     });
     const hook = h1Title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
     const coverSubject = cover?.subject || `${bareTicker(ticker)}: ${hook || "today's idea"}`;
     const coverBody =
       cover?.body ||
       `${memo.meta?.one_liner ?? "My latest idea for you."}${
-        willAttach
-          ? "\n\nThe full write-up and a one-page fact sheet are attached — the complete argument, the numbers, and the sources are all in there."
+        fullReport !== null
+          ? tearSheet !== null
+            ? "\n\nThe one-page memo and the full report are attached — the complete argument, the numbers, and the sources are all in there."
+            : "\n\nThe full report is attached — the complete argument, the numbers, and the sources are all in there."
           : ""
       }`;
     title = coverSubject; // the DB title + email subject = what the reader saw
@@ -532,34 +565,6 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       extras: { researchLinks, sources: memo.sources, meta: memo.meta, dateLine },
     });
     if (memoError) throw new Error(`Memo insert failed: ${memoError.message}`);
-
-    if (memoKind !== "review" && config().ATTACH_TEARSHEET === "true") {
-      [tearSheet, fullReport] = await Promise.all([
-        // Page one: the memo page, distilled from the verified note and
-        // fact-checked on its own; null (report-only send) if it can't pass.
-        buildTearSheet({
-          ticker,
-          companyName,
-          firstName: greetingName(subscriber.email, subscriber.first_name),
-          dateLine,
-          data,
-          meta: memo.meta,
-          fullNoteMarkdown: memo.markdown,
-          verifySources: memo.sources,
-        }),
-        // The report carries the full workings: chart, comps, scenarios.
-        buildFullReport({
-          markdown: memo.markdown,
-          ticker,
-          companyName,
-          dateLine,
-          data,
-          meta: memo.meta,
-          sources: memo.sources,
-          compTable,
-        }),
-      ]);
-    }
   }
 
   const resendId = await sendEmail({
