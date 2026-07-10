@@ -1,0 +1,146 @@
+import { anthropic } from "./anthropic";
+import { config } from "./config";
+import type { TickerData } from "./fmp";
+import type { ComputedFigure } from "./figures";
+import type { KeyStat } from "./stats";
+import { verifyMemo } from "./verify";
+
+/**
+ * Page one of the idea PDF: a one-page memo in the register of a Howard
+ * Marks note (John's spec, mockup 2026-07-07). Five titled serif sections,
+ * 300-450 words, distilled from the ALREADY-VERIFIED full note plus the
+ * one snapshot — then fact-checked again on its own, because this page
+ * carries more numbers than the cover note and John reads them all.
+ */
+
+export interface PageOneMemo {
+  /** The Re: line's one-line handle, e.g. "gold producer, TSX Venture". */
+  handle: string;
+  trade: string;
+  business: string;
+  valuation: string;
+  variant: string;
+  risks: string;
+}
+
+const PAGE_ONE_SCHEMA = {
+  type: "object",
+  properties: {
+    handle: {
+      type: "string",
+      description:
+        'Short handle for the Re: line, lowercase, 3-6 words: what it is and where it trades, e.g. "gold producer, TSX Venture" or "UK retail bank, LSE". No ticker (shown separately).',
+    },
+    trade: {
+      type: "string",
+      description: "2-3 sentences: what you buy, the absolute price you pay, why today.",
+    },
+    business: {
+      type: "string",
+      description:
+        "3-4 sentences: what it does, where the money is made, run-rate economics from filings.",
+    },
+    valuation: {
+      type: "string",
+      description:
+        "Absolute first: lead with P/TBV and what tangible book consists of, then earnings and free cash flow against the true EV. Name the figures and the statement date. NO peer relatives.",
+    },
+    variant: {
+      type: "string",
+      description: "What the market believes, and the specific reason it is wrong.",
+    },
+    risks: {
+      type: "string",
+      description:
+        'Named risks with numbers, exactly ONE sentence starting "I am wrong if", then the dated catalyst.',
+    },
+  },
+  required: ["handle", "trade", "business", "valuation", "variant", "risks"],
+  additionalProperties: false,
+} as const;
+
+const PAGE_ONE_SYSTEM = `You distil a finished, fact-checked research note into PAGE ONE of the PDF: a one-page memo in the register of a Howard Marks note — measured, first person, absolute-valuation-first, no salesmanship. The page already carries a header, an italic thesis line, and a stat strip; you write the five prose sections.
+
+HARD RULES:
+- 300-450 words TOTAL across the five sections. Short beats complete.
+- Plain prose, no markdown, no bullets, no links. Each section is flowing sentences.
+- Absolute valuation first: the valuation section LEADS with P/TBV and what tangible book actually consists of, then earnings and free cash flow against the TRUE enterprise value, naming the balance-sheet statement date. NO peer names or peer multiples anywhere on this page — relatives live in the attached report.
+- Rounded figures in prose: one decimal on multiples, whole millions ("about US$98M", "2.7x earnings"), never false precision. The strip carries the precision.
+- Every number must come from the <stat_strip>, the <computed_figures>, or a figure already present in the full note (which is fact-checked). Where a figure is not available, write "n/a" — never estimate.
+- The risks section contains EXACTLY ONE sentence starting "I am wrong if", and ends with the dated catalyst.
+- The one-line handle: what it is and where it trades, e.g. "gold producer, TSX Venture".`;
+
+export async function writePageOneMemo(args: {
+  fullNoteMarkdown: string;
+  ticker: string;
+  companyName?: string;
+  industry?: string;
+  exchange?: string;
+  balanceSheetDate?: string | null;
+  strip: KeyStat[];
+  figures: ComputedFigure[];
+  data: TickerData;
+  verifySources: { url: string; title: string }[];
+}): Promise<PageOneMemo | null> {
+  const cfg = config();
+  const stripLine = args.strip.map((s) => `${s.label}: ${s.value}`).join(" | ");
+  const figuresBlock = args.figures.map((f) => `${f.label}: ${f.value}`).join("\n");
+  const userContent = (repairNote: string) =>
+    `<full_note ticker="${args.ticker}" company="${args.companyName ?? ""}">\n${args.fullNoteMarkdown}\n</full_note>\n\n` +
+    `<stat_strip note="page one's own strip — the reader sees these exact values">\n${stripLine}\n</stat_strip>\n\n` +
+    `<computed_figures note="the snapshot behind the strip, at today's close${args.balanceSheetDate ? `; balance sheet dated ${args.balanceSheetDate}` : ""}">\n${figuresBlock}\n</computed_figures>\n\n` +
+    `Context for the handle: industry "${args.industry ?? "?"}", exchange "${args.exchange ?? "?"}".\n` +
+    `${repairNote}Write the five sections and the handle.`;
+
+  try {
+    let repairNote = "";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await anthropic().messages.create({
+        model: cfg.MEMO_MODEL,
+        max_tokens: 3000,
+        thinking: { type: "disabled" },
+        output_config: { format: { type: "json_schema", schema: PAGE_ONE_SCHEMA }, effort: "medium" },
+        system: PAGE_ONE_SYSTEM,
+        messages: [{ role: "user", content: userContent(repairNote) }],
+      });
+      if (res.stop_reason === "refusal") return null;
+      const text = res.content.find((b) => b.type === "text");
+      const parsed = JSON.parse(text && "text" in text ? text.text : "{}") as Partial<PageOneMemo>;
+      if (!parsed.trade || !parsed.valuation || !parsed.risks) return null;
+      const memo: PageOneMemo = {
+        handle: (parsed.handle ?? "").trim().slice(0, 60),
+        trade: (parsed.trade ?? "").trim(),
+        business: (parsed.business ?? "").trim(),
+        valuation: (parsed.valuation ?? "").trim(),
+        variant: (parsed.variant ?? "").trim(),
+        risks: (parsed.risks ?? "").trim(),
+      };
+
+      // Page one gets its own fact-check: it is the densest page in the
+      // client's hands. One repair round; on a second failure, no page one
+      // (the verified full report still ships) — never a wrong number.
+      const pageText = [
+        `# ${args.ticker} — page one`,
+        `## The trade\n${memo.trade}`,
+        `## The business\n${memo.business}`,
+        `## The valuation\n${memo.valuation}`,
+        `## The variant view\n${memo.variant}`,
+        `## Risks and catalyst\n${memo.risks}`,
+      ].join("\n\n");
+      const verification = await verifyMemo(pageText, args.data, args.verifySources, args.figures);
+      if (verification.passed) return memo;
+      console.warn(
+        `Page-one memo failed verification for ${args.ticker} (attempt ${attempt + 1}):`,
+        verification.critical_issues,
+      );
+      repairNote =
+        `IMPORTANT — your previous draft contained factual errors. Fix each by using the exact strip/figures value, or cut the claim:\n` +
+        verification.critical_issues.map((i) => `- "${i.claim}": ${i.problem}`).join("\n") +
+        "\n\n";
+    }
+    return null;
+  } catch (e) {
+    console.error(`Page-one memo failed for ${args.ticker} (PDF ships without page one):`, e);
+    return null;
+  }
+}

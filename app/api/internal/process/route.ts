@@ -535,7 +535,19 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
 
     if (memoKind !== "review" && config().ATTACH_TEARSHEET === "true") {
       [tearSheet, fullReport] = await Promise.all([
-        buildTearSheet({ ticker, companyName, dateLine, preparedFor: subscriber.email, data, meta: memo.meta, compTable }),
+        // Page one: the memo page, distilled from the verified note and
+        // fact-checked on its own; null (report-only send) if it can't pass.
+        buildTearSheet({
+          ticker,
+          companyName,
+          firstName: greetingName(subscriber.email, subscriber.first_name),
+          dateLine,
+          data,
+          meta: memo.meta,
+          fullNoteMarkdown: memo.markdown,
+          verifySources: memo.sources,
+        }),
+        // The report carries the full workings: chart, comps, scenarios.
         buildFullReport({
           markdown: memo.markdown,
           ticker,
@@ -544,6 +556,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
           data,
           meta: memo.meta,
           sources: memo.sources,
+          compTable,
         }),
       ]);
     }

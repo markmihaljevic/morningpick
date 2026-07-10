@@ -1,5 +1,5 @@
 import compMetrics from "./comp-metrics-v1.json";
-import { fmpGet, type TickerData, type PeerComp } from "./fmp";
+import { fmpGet, fetchLatestBalanceSheet, type TickerData, type PeerComp } from "./fmp";
 import { logEvent } from "./db";
 import {
   buildSnapshot,
@@ -138,7 +138,10 @@ function computedCell(key: string, r: RowData, nonEarner: boolean): string {
       return r.ebit > 0 ? (fmtX(s.enterpriseValue / r.ebit) ?? N_M) : N_M;
     case "p_tbv": {
       // Rule: 'neg' when tangible equity is negative — a real signal, not a gap.
-      if (s.tangibleBookPerShare !== null && s.tangibleBookPerShare <= 0) return "neg";
+      // Balance-sheet tangible book is the canonical test when present.
+      if (s.tangibleBookAbs !== null && s.tangibleBookAbs <= 0) return "neg";
+      if (s.tangibleBookAbs === null && s.tangibleBookPerShare !== null && s.tangibleBookPerShare <= 0)
+        return "neg";
       // Rule: P/TBV can never be below P/B — if it is, the book data is bad.
       if (s.pTangibleBook !== null && s.pb !== null && s.pTangibleBook < s.pb * 0.95) return N_A;
       return fmtX(s.pTangibleBook) ?? N_A;
@@ -154,15 +157,16 @@ function computedCell(key: string, r: RowData, nonEarner: boolean): string {
       return r.revenue > 0 ? (fmtX(s.enterpriseValue / r.revenue) ?? N_M) : N_M;
     case "fcf_yield": {
       if (s.fcfYield === null) return N_A;
-      // Rule: FCF above EBITDA is almost always a data error.
+      // Rule: FCF above EBITDA is almost always a data error. SAME-period
+      // inputs only (TTM FCF vs TTM EBITDA) — mixing TTM cash flow with
+      // annual revenue false-positives on fast growers (MMY doubled sales).
       if (
         s.fcfPerShare !== null &&
         r.shares !== null &&
         r.shares > 0 &&
-        s.ebitdaMargin !== null &&
-        r.revenue !== null &&
-        r.revenue > 0 &&
-        s.fcfPerShare * r.shares > Math.max(0, s.ebitdaMargin * r.revenue) * 1.2
+        s.ebitdaTTM !== null &&
+        s.ebitdaTTM > 0 &&
+        s.fcfPerShare * r.shares > s.ebitdaTTM * 1.2
       ) {
         return N_A; // fails the FCF-vs-EBITDA sanity check — bad row data
       }
@@ -214,11 +218,12 @@ function computedCell(key: string, r: RowData, nonEarner: boolean): string {
 async function peerRowData(peer: PeerComp): Promise<RowData | null> {
   try {
     const symbol = { symbol: peer.symbol };
-    const [profile, quote, rt, kt, inc] = await Promise.all([
+    const [profile, quote, rt, kt, bs, inc] = await Promise.all([
       fmpGet<Record<string, unknown>[]>("profile", symbol),
       fmpGet<Record<string, unknown>[]>("quote", symbol),
       fmpGet<Record<string, unknown>[]>("ratios-ttm", symbol),
       fmpGet<Record<string, unknown>[]>("key-metrics-ttm", symbol),
+      fetchLatestBalanceSheet(peer.symbol),
       fmpGet<Record<string, unknown>[]>("income-statement", { ...symbol, limit: 4 }),
     ]);
     const incRows = (inc ?? []) as Record<string, unknown>[];
@@ -227,6 +232,7 @@ async function peerRowData(peer: PeerComp): Promise<RowData | null> {
       quote: quote?.[0] ?? {},
       ratiosTTM: rt?.[0] ?? {},
       keyMetricsTTM: kt?.[0] ?? {},
+      balanceSheet: bs as Record<string, unknown> | null,
       incomeStatements: incRows,
     });
     const name = String(profile?.[0]?.companyName ?? peer.name ?? peer.symbol);

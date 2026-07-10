@@ -105,8 +105,17 @@ async function main() {
     dateLine,
   });
   const [tearSheet, fullReport] = await Promise.all([
-    buildTearSheet({ ticker: target.ticker, companyName: original?.company_name ?? undefined, dateLine, preparedFor: subscriber.email, data, meta: memo.meta, compTable }),
-    buildFullReport({ markdown: memo.markdown, ticker: target.ticker, companyName: original?.company_name ?? undefined, dateLine, data, meta: memo.meta, sources: memo.sources }),
+    buildTearSheet({
+      ticker: target.ticker,
+      companyName: original?.company_name ?? undefined,
+      firstName: null,
+      dateLine,
+      data,
+      meta: memo.meta,
+      fullNoteMarkdown: memo.markdown,
+      verifySources: memo.sources,
+    }),
+    buildFullReport({ markdown: memo.markdown, ticker: target.ticker, companyName: original?.company_name ?? undefined, dateLine, data, meta: memo.meta, sources: memo.sources, compTable }),
   ]);
   const bare = bareTicker(target.ticker);
   const attachments: { filename: string; content: Buffer }[] = [];

@@ -31,9 +31,16 @@ export interface FiguresSnapshot {
   repCur: string; // prefix for financials (reported currency)
   marketCap: number | null; // listing MAJOR units, as quoted
   marketCapReported: number | null; // reported currency, at today's close
-  enterpriseValue: number | null; // reported currency
-  netDebt: number | null; // reported currency
+  enterpriseValue: number | null; // reported currency; balance-sheet-true when available
+  netDebt: number | null; // reported currency; negative = net cash
   netDebtToEbitda: number | null;
+  // Balance-sheet components (reported currency, one statement, one date) —
+  // null when no balance sheet is available and a fallback derivation ran.
+  balanceSheetDate: string | null;
+  totalDebt: number | null;
+  cashAndDeposits: number | null; // cash + short-term investments
+  tangibleBookAbs: number | null; // total equity − goodwill − intangibles
+  ebitdaTTM: number | null; // derived from kt's own EV/EBITDA pair — one epoch
   priceFresh: boolean; // false → FX unavailable, FMP's converted TTM ratios used
   pe: number | null;
   evEbitda: number | null;
@@ -87,10 +94,22 @@ function n(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** A currency code as a readable prefix: "USD" → "$", "GBp" → "GBp ". */
+/** A currency code as a readable prefix: "USD" → "$", "CAD" → "C$", "GBp" stays. */
+const CUR_SYMBOLS: Record<string, string> = {
+  USD: "$",
+  CAD: "C$",
+  AUD: "A$",
+  GBP: "£",
+  EUR: "€",
+  JPY: "¥",
+  CHF: "CHF ",
+  SEK: "SEK ",
+  NOK: "NOK ",
+  DKK: "DKK ",
+};
 function curPrefix(code: unknown): string {
   if (typeof code !== "string" || !code) return "";
-  return code === "USD" ? "$" : `${code} `;
+  return CUR_SYMBOLS[code] ?? `${code} `;
 }
 
 export interface SnapshotParts {
@@ -100,6 +119,9 @@ export interface SnapshotParts {
   keyMetricsTTM: Record<string, unknown>;
   /** Newest-first fiscal years; [0] used for reported currency + absolutes. */
   incomeStatements: Record<string, unknown>[];
+  /** The latest REPORTED balance sheet (quarterly preferred) — the canonical
+   * source for net cash, true EV, and tangible book. One statement, one date. */
+  balanceSheet?: Record<string, unknown> | null;
   /** Annual rows — non-price fallbacks only (margins, returns). */
   ratiosAnnual?: Record<string, unknown>;
   keyMetricsAnnual?: Record<string, unknown>;
@@ -112,6 +134,7 @@ export interface SnapshotParts {
  */
 export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSnapshot> {
   const { profile, quote, ratiosTTM: rt, keyMetricsTTM: kt } = parts;
+  const bs = parts.balanceSheet ?? null;
   const inc0 = parts.incomeStatements[0] ?? {};
   const inc1 = parts.incomeStatements[1];
   const incLast = parts.incomeStatements[3]; // 4th year back → 3Y CAGR
@@ -127,6 +150,7 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
   // TTM ratios, priceFresh=false).
   const cur = (v: unknown) => (typeof v === "string" && v ? v : null);
   const reported =
+    cur(bs?.reportedCurrency) ??
     cur(inc0.reportedCurrency) ??
     cur(ra.reportedCurrency) ??
     cur(ka.reportedCurrency) ??
@@ -163,8 +187,33 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
     const v = over(rt.netIncomePerShareTTM, rt.priceToEarningsRatioTTM);
     return v !== null && v > 0 ? v : null; // negative earnings → no meaningful P/E
   })();
+  // Balance-sheet components: one statement, one date (John's rule). FMP's
+  // netDebt field counts only the cash LINE — it missed the US$90.7M Monument
+  // held in short-term deposits — so net cash, EV, and tangible book are
+  // assembled from the raw statement fields, never a vendor's precomputed one.
+  const balanceSheetDate = bs && typeof bs.date === "string" ? bs.date : null;
+  const totalDebt = n(bs?.totalDebt);
+  const cashAndDeposits = ((): number | null => {
+    const cash = n(bs?.cashAndCashEquivalents);
+    const sti = n(bs?.shortTermInvestments);
+    if (cash === null && sti === null) return n(bs?.cashAndShortTermInvestments);
+    return (cash ?? 0) + (sti ?? 0);
+  })();
+  const tangibleBookAbs = ((): number | null => {
+    const equity = n(bs?.totalStockholdersEquity) ?? n(bs?.totalEquity);
+    if (equity === null) return null;
+    const gwPlusIntang =
+      n(bs?.goodwillAndIntangibleAssets) ?? (n(bs?.goodwill) ?? 0) + (n(bs?.intangibleAssets) ?? 0);
+    return equity - gwPlusIntang;
+  })();
+
   const pb = over(rt.bookValuePerShareTTM, rt.priceToBookRatioTTM);
   const pTangibleBook = ((): number | null => {
+    // Canonical: market cap over (equity − goodwill − intangibles), both in
+    // reported currency — market cap at today's close, book at the statement.
+    if (mcapRep !== null && tangibleBookAbs !== null && tangibleBookAbs > 0) {
+      return mcapRep / tangibleBookAbs;
+    }
     const v = over(rt.tangibleBookValuePerShareTTM, null);
     if (v !== null && v > 0) return v;
     // Dimensionless fallback: P/B × (book / tangible book) — never mixes currencies.
@@ -185,47 +234,55 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
   const fcfYield = yield_(rt.freeCashFlowPerShareTTM, kt.freeCashFlowYieldTTM);
   const divYield = yield_(rt.dividendPerShareTTM, rt.dividendYieldTTM);
 
-  // EV re-anchored to today's market cap, ENTIRELY in reported currency —
-  // kt's marketCap/EV are reported-currency figures at FMP's refresh epoch.
-  const evEbitda = ((): number | null => {
+  // TTM EBITDA derived from kt's own EV/EBITDA pair (same epoch, one source).
+  const ebitdaTTM = ((): number | null => {
     const evOld = n(kt.enterpriseValueTTM);
-    const mcapOld = n(kt.marketCap);
-    const evx = n(kt.evToEBITDATTM) ?? n(rt.enterpriseValueMultipleTTM);
-    if (evx === null) return null;
-    if (evOld !== null && mcapOld !== null && mcapRep !== null && evx !== 0) {
-      const ebitda = evOld / evx;
-      if (ebitda > 0) {
-        const v = (evOld - mcapOld + mcapRep) / ebitda;
-        return v > 0 ? v : null;
-      }
-      return null; // negative EBITDA → n/m
+    const evx = n(kt.evToEBITDATTM);
+    if (evOld !== null && evx !== null && evx !== 0) {
+      const v = evOld / evx;
+      return v > 0 ? v : null;
     }
-    return evx > 0 ? evx : null;
+    return null;
   })();
+
+  // Net debt: BALANCE-SHEET-TRUE first — total debt minus cash minus
+  // short-term investments, one statement, one date (negative = net cash).
+  // Fallback: period-consistent TTM ratio × TTM EBITDA, else annual × annual.
+  const netDebt = ((): number | null => {
+    if (totalDebt !== null && cashAndDeposits !== null) return totalDebt - cashAndDeposits;
+    const ndTTM = n(kt.netDebtToEBITDATTM);
+    if (ndTTM !== null && ebitdaTTM !== null) return ndTTM * ebitdaTTM;
+    const ndAnnual = n(ka.netDebtToEBITDA);
+    const ebitda0 = n(inc0.ebitda);
+    if (ndAnnual !== null && ebitda0 !== null && ebitda0 > 0) return ndAnnual * ebitda0;
+    return null; // negative/unknown EBITDA → net debt not inferable this way
+  })();
+
+  // True EV = market cap at today's close + net debt from the statement —
+  // never a vendor's precomputed EV (whose netDebt misses deposit lines).
+  // Fallback: FMP's EV re-anchored to today's cap, entirely reported-currency.
   const enterpriseValue = ((): number | null => {
+    if (mcapRep !== null && totalDebt !== null && cashAndDeposits !== null) {
+      return mcapRep + totalDebt - cashAndDeposits;
+    }
     const evOld = n(kt.enterpriseValueTTM);
     const mcapOld = n(kt.marketCap);
     if (evOld !== null && mcapOld !== null && mcapRep !== null) return evOld - mcapOld + mcapRep;
     return evOld;
   })();
-
-  // Net debt must come from PERIOD-CONSISTENT pairs: TTM ratio × TTM EBITDA
-  // (derived from kt's own EV/EBITDA pair, same epoch), else annual ratio ×
-  // annual EBITDA. Mixing a TTM ratio with fiscal-year EBITDA mis-scales the
-  // figure and flips its sign when the two EBITDAs straddle zero.
-  const ndToEbitda = n(kt.netDebtToEBITDATTM) ?? n(ka.netDebtToEBITDA);
-  const netDebt = ((): number | null => {
-    const ndTTM = n(kt.netDebtToEBITDATTM);
-    const evOld = n(kt.enterpriseValueTTM);
-    const evx = n(kt.evToEBITDATTM);
-    if (ndTTM !== null && evOld !== null && evx !== null && evx !== 0) {
-      const ebitdaTTM = evOld / evx;
-      if (ebitdaTTM > 0) return ndTTM * ebitdaTTM;
+  const evEbitda = ((): number | null => {
+    if (enterpriseValue !== null && ebitdaTTM !== null) {
+      const v = enterpriseValue / ebitdaTTM;
+      return v > 0 ? v : null;
     }
-    const ndAnnual = n(ka.netDebtToEBITDA);
-    const ebitda0 = n(inc0.ebitda);
-    if (ndAnnual !== null && ebitda0 !== null && ebitda0 > 0) return ndAnnual * ebitda0;
-    return null; // negative/unknown EBITDA → net debt not inferable this way
+    // No usable EBITDA pair → FMP's converted multiple as the labeled fallback.
+    const evx = n(kt.evToEBITDATTM) ?? n(rt.enterpriseValueMultipleTTM);
+    return evx !== null && evx > 0 ? evx : null;
+  })();
+
+  const ndToEbitda = ((): number | null => {
+    if (netDebt !== null && ebitdaTTM !== null) return netDebt / ebitdaTTM;
+    return n(kt.netDebtToEBITDATTM) ?? n(ka.netDebtToEBITDA);
   })();
 
   const growth = (a: unknown, b: unknown): number | null => {
@@ -262,6 +319,11 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
     enterpriseValue,
     netDebt,
     netDebtToEbitda: ndToEbitda,
+    balanceSheetDate,
+    totalDebt,
+    cashAndDeposits,
+    tangibleBookAbs,
+    ebitdaTTM,
     priceFresh,
     pe,
     evEbitda,
@@ -311,6 +373,7 @@ export async function buildSnapshot(data: TickerData): Promise<FiguresSnapshot> 
     incomeStatements: (Array.isArray(data.incomeStatement)
       ? data.incomeStatement
       : []) as Record<string, unknown>[],
+    balanceSheet: (data.balanceSheet ?? null) as Record<string, unknown> | null,
     ratiosAnnual: first<Record<string, unknown>>(data.ratios),
     keyMetricsAnnual: first<Record<string, unknown>>(data.keyMetrics),
     street: data.street,
@@ -362,6 +425,13 @@ export async function buildComputedFigures(data: TickerData): Promise<ComputedFi
     push("Net debt", s.netDebt < 0 ? `net cash ${fmtMoney(-s.netDebt, s.repCur)}` : fmtMoney(s.netDebt, s.repCur));
   }
   push("Net debt / EBITDA", s.netDebtToEbitda !== null ? `${s.netDebtToEbitda.toFixed(2)}x` : null);
+  // Balance-sheet components — the note names the statement date with these.
+  if (s.balanceSheetDate) {
+    push("Balance sheet date", s.balanceSheetDate);
+    push("Cash + short-term investments", fmtMoney(s.cashAndDeposits, s.repCur));
+    push("Total debt", fmtMoney(s.totalDebt, s.repCur));
+    push("Tangible book (equity − goodwill − intangibles)", fmtMoney(s.tangibleBookAbs, s.repCur));
+  }
 
   push("P/E", fmtX(s.pe));
   push("EV/EBITDA", fmtX(s.evEbitda));

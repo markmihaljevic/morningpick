@@ -1,7 +1,8 @@
 import React from "react";
-import { Document, Page, Text, View, Link, StyleSheet } from "@react-pdf/renderer";
+import { Document, Page, Text, View, Image, Link, StyleSheet } from "@react-pdf/renderer";
 import { marked, type Token, type Tokens } from "marked";
 import type { MemoSource, MemoMeta } from "../memo";
+import type { CompTable } from "../comp-table";
 
 // The full written argument, as a plain professional research PDF — the same
 // restrained palette as the one-pager. No masthead, no brand colours: the
@@ -56,6 +57,13 @@ const S = StyleSheet.create({
     marginBottom: 6,
   },
   sourceLine: { marginBottom: 3, fontFamily: "Helvetica", fontSize: 7.5, color: GREY },
+  compTr: {
+    flexDirection: "row",
+    borderBottomWidth: 0.5,
+    borderBottomColor: RULE_LIGHT,
+    paddingVertical: 3.5,
+  },
+  compTh: { fontFamily: "Helvetica-Bold", fontSize: 6.5, letterSpacing: 0.5, color: GREY },
   footer: {
     position: "absolute",
     bottom: 22,
@@ -79,6 +87,24 @@ export interface FullReportArgs {
   dateLine?: string;
   meta?: MemoMeta | null;
   sources?: MemoSource[];
+  // Full workings that moved off page one (the memo page): chart, comps,
+  // scenarios. Page one carries the argument; this report carries the data.
+  chartUrl?: string | null;
+  compTable?: CompTable | null;
+}
+
+/** Truncate a company NAME if needed — never the ticker. Corporate suffixes
+ * go first: "Caledonia Mining Corporation Plc" reads as "Caledonia Mining". */
+function compRowLabel(name: string, ticker: string): string {
+  let clean = name;
+  if (clean.length > 26) {
+    clean = clean
+      .replace(/[,.]?\s+(PLC|Plc|plc|Ltd\.?|Limited|Corporation|Corp\.?|Inc\.?|Incorporated|S\.?A\.?|AG|NV|N\.V\.|SE|ASA|AB|Oyj|SpA|S\.p\.A\.)\.?\s*$/g, "")
+      .replace(/[,.]?\s+(PLC|Plc|plc|Ltd\.?|Limited|Corporation|Corp\.?|Inc\.?)\.?\s*$/g, "")
+      .trim();
+  }
+  const trimmed = clean.length > 26 ? `${clean.slice(0, 25).trimEnd()}…` : clean;
+  return `${trimmed} (${ticker})`;
 }
 
 /** Render inline markdown tokens (bold/em/links/text) into nested Text. */
@@ -192,6 +218,83 @@ export function FullReport(args: FullReportArgs) {
         {args.meta?.one_liner && <Text style={S.oneLiner}>{args.meta.one_liner}</Text>}
 
         {blocks(args.markdown)}
+
+        {args.chartUrl && (
+          <>
+            <Text style={S.h}>SHARE PRICE — 5 YEARS</Text>
+            {/* eslint-disable-next-line jsx-a11y/alt-text */}
+            <Image src={args.chartUrl} style={{ marginTop: 2, borderWidth: 0.5, borderColor: RULE_LIGHT }} />
+          </>
+        )}
+
+        {args.compTable && args.compTable.rows.length > 0 && (
+          <>
+            <Text style={S.h}>VALUATION VS PEERS — {args.compTable.groupLabel.toUpperCase()}</Text>
+            <View style={[S.compTr, { borderBottomWidth: 0.75, borderBottomColor: INK }]}>
+              <Text style={[S.compTh, { flex: 2.4 }]}> </Text>
+              {args.compTable.columns.map((c) => (
+                <Text key={c.key} style={[S.compTh, { flex: 1, textAlign: "right" }]}>
+                  {c.label.toUpperCase()}
+                </Text>
+              ))}
+            </View>
+            {args.compTable.rows.map((r, i) => (
+              <View key={i} style={S.compTr}>
+                <View style={{ flex: 2.4 }}>
+                  <Text
+                    style={{
+                      fontFamily: r.self ? "Helvetica-Bold" : "Helvetica",
+                      fontSize: 8,
+                      color: r.self ? INK : GREY,
+                    }}
+                  >
+                    {compRowLabel(r.name, r.ticker)}
+                  </Text>
+                  {r.tag ? (
+                    <Text style={{ fontFamily: "Helvetica", fontSize: 6, color: GREY, marginTop: 1 }}>{r.tag}</Text>
+                  ) : null}
+                </View>
+                {r.cells.map((v, j) => (
+                  <Text
+                    key={j}
+                    style={{
+                      flex: 1,
+                      textAlign: "right",
+                      fontFamily: r.self ? "Helvetica-Bold" : "Helvetica",
+                      fontSize: 8,
+                      color: r.self ? INK : GREY,
+                    }}
+                  >
+                    {v}
+                  </Text>
+                ))}
+              </View>
+            ))}
+            {args.compTable.footnotes.length > 0 && (
+              <Text style={{ fontFamily: "Helvetica", fontSize: 5.5, color: GREY, marginTop: 3, lineHeight: 1.5 }}>
+                {args.compTable.footnotes.join("  ·  ")}
+              </Text>
+            )}
+          </>
+        )}
+
+        {args.meta?.scenarios && (
+          <>
+            <Text style={S.h}>SCENARIOS</Text>
+            {([
+              ["Bear", args.meta.scenarios.bear],
+              ["Base", args.meta.scenarios.base],
+              ["Bull", args.meta.scenarios.bull],
+            ] as const)
+              .filter(([, v]) => v)
+              .map(([tag, v], i) => (
+                <View key={i} style={{ flexDirection: "row", marginBottom: 5 }}>
+                  <Text style={{ width: 36, fontFamily: "Helvetica-Bold", fontSize: 8.5 }}>{tag}</Text>
+                  <Text style={{ flex: 1, fontFamily: "Times-Roman", fontSize: 9.5, lineHeight: 1.35 }}>{v}</Text>
+                </View>
+              ))}
+          </>
+        )}
 
         {args.sources && args.sources.length > 0 && (
           <View>

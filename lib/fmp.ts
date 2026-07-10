@@ -366,6 +366,12 @@ export interface TickerData {
   quote: unknown;
   keyMetrics: unknown;
   ratios: unknown; // 10 fiscal years, newest first — the company's own multiple history
+  // The latest reported balance sheet (quarterly preferred, annual fallback).
+  // Net cash, true EV, and tangible book are computed from THIS statement —
+  // one balance sheet, one date — never from a vendor's precomputed netDebt
+  // (FMP's counts only the cash line: it missed the US$90.7M Monument moved
+  // into short-term deposits and halved the engine's own pitch).
+  balanceSheet: unknown;
   // TTM vintages — refreshed daily by FMP, unlike the annual rows above which
   // are stamped at fiscal-year-end PRICES (the CJ.TO stale-yield bug). All
   // headline price-dependent figures are recomputed from these at the day's
@@ -379,10 +385,38 @@ export interface TickerData {
   peers: PeerComp[];
 }
 
-/** Fetch the grounding dataset for one ticker (~14 FMP requests, cached per day). */
+/**
+ * The latest REPORTED balance sheet: quarterly when available (a June-FY
+ * miner's "latest" in July is the March Q3, not last year's annual), annual
+ * as the fallback. Soft-fails to null — consumers fall back to TTM ratios.
+ */
+export async function fetchLatestBalanceSheet(ticker: string): Promise<unknown> {
+  try {
+    const quarterly = await fmpGet<Record<string, unknown>[]>("balance-sheet-statement", {
+      symbol: ticker,
+      period: "quarter",
+      limit: 1,
+    });
+    if (Array.isArray(quarterly) && quarterly[0]?.date) return quarterly[0];
+  } catch (e) {
+    console.error(`Quarterly balance sheet failed for ${ticker} (trying annual):`, e);
+  }
+  try {
+    const annual = await fmpGet<Record<string, unknown>[]>("balance-sheet-statement", {
+      symbol: ticker,
+      limit: 1,
+    });
+    if (Array.isArray(annual) && annual[0]?.date) return annual[0];
+  } catch (e) {
+    console.error(`Annual balance sheet failed for ${ticker}:`, e);
+  }
+  return null;
+}
+
+/** Fetch the grounding dataset for one ticker (~15 FMP requests, cached per day). */
 export async function fetchTickerData(ticker: string): Promise<TickerData> {
   const symbol = { symbol: ticker };
-  const [profile, quote, keyMetrics, ratios, ratiosTTM, keyMetricsTTM, incomeStatement, insiderTrades, street, latestTranscript, peers] =
+  const [profile, quote, keyMetrics, ratios, ratiosTTM, keyMetricsTTM, balanceSheet, incomeStatement, insiderTrades, street, latestTranscript, peers] =
     await Promise.all([
       fmpGet("profile", symbol),
       fmpGet("quote", symbol),
@@ -392,6 +426,7 @@ export async function fetchTickerData(ticker: string): Promise<TickerData> {
       fmpGet("ratios", { ...symbol, limit: 10 }),
       fmpGet("ratios-ttm", symbol),
       fmpGet("key-metrics-ttm", symbol),
+      fetchLatestBalanceSheet(ticker),
       // 4 years: [0]/[1] for YoY, [3] for the 3-year revenue CAGR.
       fmpGet("income-statement", { ...symbol, limit: 4 }),
       fetchInsiderTrades(ticker),
@@ -399,5 +434,5 @@ export async function fetchTickerData(ticker: string): Promise<TickerData> {
       fetchLatestTranscript(ticker),
       fetchPeerComps(ticker),
     ]);
-  return { profile, quote, keyMetrics, ratios, ratiosTTM, keyMetricsTTM, incomeStatement, insiderTrades, street, latestTranscript, peers };
+  return { profile, quote, keyMetrics, ratios, ratiosTTM, keyMetricsTTM, balanceSheet, incomeStatement, insiderTrades, street, latestTranscript, peers };
 }

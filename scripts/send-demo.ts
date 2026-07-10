@@ -59,11 +59,17 @@ async function main() {
   const { items: coverageItems, taste } = await getCoverageContext(subscriber.id);
   const coverage = coverageForPrompt(coverageItems);
 
+  // DEMO_TICKER=THX.L forces a full idea note on one name — bypasses selection
+  // and the conviction gate so a preview always shows the whole idea+one-pager
+  // experience, even for a high-bar profile that would otherwise book-review.
+  const demoTicker = process.env.DEMO_TICKER?.trim();
   let decision =
-    (process.env.FORCE_KIND as NoteKind | undefined) &&
-    ["second_look", "review"].includes(process.env.FORCE_KIND!)
-      ? await fallbackNote({ coverageItems, reason: `forced ${process.env.FORCE_KIND} demo` })
-      : await decideNote({ coverageItems, dailyPlan: true });
+    demoTicker
+      ? { kind: "idea" as NoteKind, reason: `forced demo idea on ${demoTicker}` }
+      : (process.env.FORCE_KIND as NoteKind | undefined) &&
+          ["second_look", "review"].includes(process.env.FORCE_KIND!)
+        ? await fallbackNote({ coverageItems, reason: `forced ${process.env.FORCE_KIND} demo` })
+        : await decideNote({ coverageItems, dailyPlan: true });
   console.error(`Desk decision: ${decision.kind} — ${decision.reason}`);
 
   let ticker = "";
@@ -81,7 +87,14 @@ async function main() {
   let data: TickerData | null = null;
   let memoKind: NoteKind = decision.kind;
 
-  if (decision.kind === "idea") {
+  if (decision.kind === "idea" && demoTicker) {
+    ticker = demoTicker;
+    data = await fetchTickerData(demoTicker);
+    const p = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as { companyName?: string } | undefined;
+    companyName = p?.companyName;
+    selectionRationale = `Forced demo idea on ${demoTicker} — showcasing the full idea note, one-pager, and sector-aware comp table.`;
+    console.error(`Forced demo ticker: ${ticker} (${companyName ?? "?"})`);
+  } else if (decision.kind === "idea") {
     const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
       .toISOString()
       .slice(0, 10);
@@ -254,8 +267,17 @@ async function main() {
     memoKind === "review"
       ? [null, null]
       : await Promise.all([
-          buildTearSheet({ ticker, companyName, dateLine, preparedFor: subscriber.email, data, meta: memo.meta, compTable }),
-          buildFullReport({ markdown: memo.markdown, ticker, companyName, dateLine, data, meta: memo.meta, sources: memo.sources }),
+          buildTearSheet({
+            ticker,
+            companyName,
+            firstName: greetingName(subscriber.email, subscriber.first_name),
+            dateLine,
+            data,
+            meta: memo.meta,
+            fullNoteMarkdown: memo.markdown,
+            verifySources: memo.sources,
+          }),
+          buildFullReport({ markdown: memo.markdown, ticker, companyName, dateLine, data, meta: memo.meta, sources: memo.sources, compTable }),
         ]);
   console.error(
     `Attachments: one-pager ${tearSheet ? `${(tearSheet.length / 1024).toFixed(0)} KB` : "none"}, ` +
