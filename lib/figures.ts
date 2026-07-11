@@ -150,8 +150,8 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
   // Reported currency from wherever a statement-shaped row declares it. If NO
   // source declares one, we must NOT assume the listing currency — that
   // assumption on a USD-reporting/GBp-quoted name is exactly the THX.L bug.
-  // Unknown reported currency → the safe fallback path (FMP's own converted
-  // TTM ratios, priceFresh=false).
+  // Unknown reported currency → no FX → price-dependent ratios are NULL
+  // (n/a); there is no vendor fallback anywhere.
   const cur = (v: unknown) => (typeof v === "string" && v ? v : null);
   const reported =
     cur(inc0.reportedCurrency) ??
@@ -284,7 +284,10 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
       return mcapOld + (totalDebt as number) - (cashAndDeposits as number);
     }
     if (evOld !== null && mcapOld !== null && mcapRep !== null) return evOld - mcapOld + mcapRep;
-    return evOld;
+    // No statement AND no converted cap → returning evOld would hand back the
+    // vendor EV verbatim, and evEbitda would algebraically reconstruct the
+    // banned vendor multiple (evOld / (evOld/evx) ≡ evx). Don't print.
+    return null;
   })();
   const evEbitda = ((): number | null => {
     if (enterpriseValue !== null && ebitdaTTM !== null) {
@@ -527,11 +530,60 @@ export async function buildComputedFigures(data: TickerData): Promise<ComputedFi
   return out.filter((f): f is ComputedFigure => f !== null);
 }
 
+/**
+ * Strip vendor-precomputed price ratios from a dataset copy BEFORE it is
+ * serialized into any LLM prompt. The fields are stamped at the vendor's
+ * refresh price — sometimes unconverted across currencies (TBC: GEL vs GBp
+ * → 0.5x "book") — and a verifier told "figures matching the dataset are
+ * correct" would bless them. The snapshot keeps the raw rows internally;
+ * the models never see the banned fields at all.
+ */
+const BANNED_TTM_RATIO_FIELDS = [
+  "priceToEarningsRatioTTM", "priceToEarningsGrowthRatioTTM", "forwardPriceToEarningsGrowthRatioTTM",
+  "priceToBookRatioTTM", "priceToSalesRatioTTM", "priceToFreeCashFlowRatioTTM",
+  "priceToOperatingCashFlowRatioTTM", "dividendYieldTTM", "priceToFairValueTTM",
+  "debtToMarketCapTTM", "enterpriseValueMultipleTTM",
+];
+const BANNED_TTM_KM_FIELDS = [
+  "marketCap", "enterpriseValueTTM", "evToSalesTTM", "evToOperatingCashFlowTTM",
+  "evToFreeCashFlowTTM", "evToEBITDATTM", "netDebtToEBITDATTM", "earningsYieldTTM",
+  "freeCashFlowYieldTTM", "grahamNumberTTM", "grahamNetNetTTM",
+];
+const BANNED_ANNUAL_RATIO_FIELDS = [
+  "priceToEarningsRatio", "priceToEarningsGrowthRatio", "forwardPriceToEarningsGrowthRatio",
+  "priceToBookRatio", "priceToSalesRatio", "priceToFreeCashFlowRatio",
+  "priceToOperatingCashFlowRatio", "dividendYield", "dividendYieldPercentage",
+  "priceToFairValue", "debtToMarketCap", "enterpriseValueMultiple",
+];
+const BANNED_ANNUAL_KM_FIELDS = [
+  "marketCap", "enterpriseValue", "evToSales", "evToOperatingCashFlow", "evToFreeCashFlow",
+  "evToEBITDA", "netDebtToEBITDA", "earningsYield", "freeCashFlowYield", "grahamNumber", "grahamNetNet",
+];
+function stripFields(rows: unknown, banned: string[]): unknown {
+  const strip = (row: unknown) => {
+    if (!row || typeof row !== "object") return row;
+    const copy = { ...(row as Record<string, unknown>) };
+    for (const f of banned) delete copy[f];
+    return copy;
+  };
+  return Array.isArray(rows) ? rows.map(strip) : strip(rows);
+}
+export function sanitizeDatasetForPrompt(data: TickerData): TickerData {
+  return {
+    ...data,
+    ratiosTTM: stripFields(data.ratiosTTM, BANNED_TTM_RATIO_FIELDS),
+    keyMetricsTTM: stripFields(data.keyMetricsTTM, BANNED_TTM_KM_FIELDS),
+    ratios: stripFields(data.ratios, BANNED_ANNUAL_RATIO_FIELDS),
+    keyMetrics: stripFields(data.keyMetrics, BANNED_ANNUAL_KM_FIELDS),
+    peers: [], // judgment-picked peers arrive via <peer_comps>, never this field
+  };
+}
+
 /** The prompt block: computed figures as ready-to-quote facts. */
 export function computedFiguresBlock(figures: ComputedFigure[]): string {
   if (figures.length === 0) return "";
   const lines = figures.map((f) => `${f.label}: ${f.value}`).join("\n");
-  return `<computed_figures note="Calculated for you directly from the filings AT TODAY'S CLOSE, with currency handled correctly (each absolute figure carries its currency; ratios and margins are dimensionless; on UK names GBp means pence and GBP means pounds). USE THESE VERBATIM. Do NOT divide, multiply, or otherwise recompute raw dataset numbers yourself, and do NOT quote valuation ratios from the dataset's annual rows — those are stamped at fiscal-year-end prices and are stale. If a figure you want is not here and not stated outright in the dataset, do not calculate it: describe it qualitatively or leave it out.">
+  return `<computed_figures note="Calculated for you directly from the filings AT TODAY'S CLOSE, with currency handled correctly (each absolute figure carries its currency; ratios and margins are dimensionless; on UK names GBp means pence and GBP means pounds). USE THESE VERBATIM. Do NOT divide, multiply, or otherwise recompute raw dataset numbers yourself, and do NOT quote ANY precomputed valuation ratio field from the dataset (annual OR TTM: priceToEarningsRatioTTM, priceToBookRatioTTM, dividendYieldTTM, enterpriseValueMultipleTTM and kin) — those are stamped at the vendor's refresh price, sometimes unconverted across currencies, and are exactly how a 1.7x-book stock once printed as 0.5x. THESE computed figures are the only valuation numbers you may use. If a figure you want is not here and not stated outright in the dataset, do not calculate it: describe it qualitatively or leave it out.">
 ${lines}
 </computed_figures>
 

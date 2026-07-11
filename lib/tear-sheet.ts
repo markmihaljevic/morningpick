@@ -27,6 +27,10 @@ export async function buildTearSheet(args: {
   /** The comp table's prompt block — verification ground truth if a peer
    * figure slips onto the page (which the structural gate also bans). */
   peerComps?: string;
+  /** The JUDGMENT-PICKED peers actually discussed in the note — the page-one
+   * no-peer-names gate scans THESE (data.peers is dead; scanning the old
+   * screen list would wave through every real peer). */
+  peers?: { symbol: string; name: string }[];
 }): Promise<Buffer | null> {
   try {
     const p = (Array.isArray(args.data.profile) ? args.data.profile[0] : args.data.profile) as
@@ -48,7 +52,7 @@ export async function buildTearSheet(args: {
       figures,
       data: args.data,
       verifySources: args.verifySources ?? [],
-      peers: (args.data.peers ?? []).map((pe) => ({ symbol: pe.symbol, name: pe.name })),
+      peers: args.peers ?? [],
       peerComps: args.peerComps,
     });
     if (!pageOne) {

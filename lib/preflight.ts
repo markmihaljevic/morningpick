@@ -1,6 +1,7 @@
 import { anthropic } from "./anthropic";
 import { config } from "./config";
 import type { TickerData } from "./fmp";
+import { sanitizeDatasetForPrompt } from "./figures";
 import type { Profile } from "./profile";
 
 /**
@@ -49,7 +50,7 @@ export interface PreflightResult {
  * TTM vintages only: the annual ratio rows are stamped at fiscal-year-end
  * prices and would anchor the conviction judgment on stale valuations. */
 function digestData(data: TickerData): string {
-  const d = data as unknown as Record<string, unknown>;
+  const d = sanitizeDatasetForPrompt(data) as unknown as Record<string, unknown>;
   const pick: Record<string, unknown> = {};
   for (const key of ["profile", "quote", "keyMetricsTTM", "ratiosTTM", "street", "earnings"]) {
     if (key in d) pick[key] = d[key];

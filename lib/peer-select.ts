@@ -68,25 +68,26 @@ RULES:
 - Use the exact ticker of the most liquid FMP-resolvable listing (exchange suffix where applicable).
 - NEVER include the subject itself.`;
 
-/** Validate the model's tickers against FMP; drop anything unresolvable. */
+/** Validate the model's tickers against FMP (in parallel — this runs while
+ * the build lock is held); drop anything unresolvable. */
 async function validatePeers(subject: string, peers: SelectedPeer[]): Promise<SelectedPeer[]> {
-  const out: SelectedPeer[] = [];
-  for (const p of peers) {
-    const ticker = p.ticker.trim().toUpperCase();
-    if (!ticker || ticker === subject.toUpperCase()) continue;
-    try {
-      const quote = await fmpGet<{ price?: number }[]>("quote", { symbol: ticker });
-      if (quote?.[0]?.price !== undefined) {
-        out.push({ ticker, name: p.name.slice(0, 60), rationale: p.rationale.slice(0, 200) });
-      } else {
+  const checked = await Promise.all(
+    peers.map(async (p) => {
+      const ticker = p.ticker.trim().toUpperCase();
+      if (!ticker || ticker === subject.toUpperCase()) return null;
+      try {
+        const quote = await fmpGet<{ price?: number }[]>("quote", { symbol: ticker });
+        if (quote?.[0]?.price !== undefined) {
+          return { ticker, name: p.name.slice(0, 60), rationale: p.rationale.slice(0, 200) };
+        }
         console.warn(`Peer ${ticker} (for ${subject}) not resolvable on FMP — dropped.`);
+      } catch {
+        console.warn(`Peer ${ticker} (for ${subject}) quote failed — dropped.`);
       }
-    } catch {
-      console.warn(`Peer ${ticker} (for ${subject}) quote failed — dropped.`);
-    }
-    if (out.length >= 6) break;
-  }
-  return out;
+      return null;
+    }),
+  );
+  return checked.filter((p): p is SelectedPeer => p !== null).slice(0, 6);
 }
 
 async function pickPeers(args: {
@@ -169,23 +170,50 @@ export async function getPeerGroup(args: {
     console.error(`peer_groups read failed for ${symbol} (picking fresh):`, e);
   }
 
-  // Build lock: one worker researches; losers wait, then re-read.
+  // Build lock: one worker researches; losers POLL for the winner's result
+  // (the model + validation realistically runs 1-4 minutes — a single short
+  // wait would strand every concurrent subscriber table-less on a ticker's
+  // first day). A lock older than 15 minutes is an orphan from a killed
+  // worker — take it over rather than poisoning the symbol for the day.
   const lockKey = `peer-group:${symbol}:${new Date().toISOString().slice(0, 10)}`;
   const { error: lockError } = await db()
     .from("fmp_cache")
     .insert({ cache_key: lockKey, payload: { at: new Date().toISOString() } });
   if (lockError) {
-    await new Promise((r) => setTimeout(r, 30_000));
-    const { data: retry } = await db()
-      .from("peer_groups")
-      .select("peers, compiled_at")
-      .eq("symbol", symbol)
-      .maybeSingle();
-    if (retry) {
-      const ageDays = (Date.now() - new Date(retry.compiled_at).getTime()) / 86_400_000;
-      if (ageDays <= MAX_AGE_DAYS) return retry.peers as SelectedPeer[];
+    let takeover = false;
+    try {
+      const { data: lockRow } = await db()
+        .from("fmp_cache")
+        .select("payload")
+        .eq("cache_key", lockKey)
+        .maybeSingle();
+      const at = (lockRow?.payload as { at?: string } | null)?.at;
+      takeover = !at || Date.now() - new Date(at).getTime() > 15 * 60_000;
+      if (takeover) {
+        await db()
+          .from("fmp_cache")
+          .update({ payload: { at: new Date().toISOString() } })
+          .eq("cache_key", lockKey);
+      }
+    } catch {
+      /* treat as live lock */
     }
-    return prior ?? []; // stale beats screen-picked; empty beats wrong
+    if (!takeover) {
+      for (let poll = 0; poll < 12; poll++) {
+        await new Promise((r) => setTimeout(r, 20_000));
+        const { data: retry } = await db()
+          .from("peer_groups")
+          .select("peers, compiled_at")
+          .eq("symbol", symbol)
+          .maybeSingle();
+        if (retry) {
+          const ageDays = (Date.now() - new Date(retry.compiled_at).getTime()) / 86_400_000;
+          if (ageDays <= MAX_AGE_DAYS) return retry.peers as SelectedPeer[];
+        }
+      }
+      return prior ?? []; // stale beats screen-picked; empty beats wrong
+    }
+    // orphan taken over — fall through to research
   }
 
   try {

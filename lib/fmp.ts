@@ -432,7 +432,11 @@ export async function fetchTickerData(ticker: string): Promise<TickerData> {
       fetchInsiderTrades(ticker),
       fetchStreetData(ticker),
       fetchLatestTranscript(ticker),
-      fetchPeerComps(ticker),
+      // FMP's stock-peers screen is dead: it benchmarked a Georgian retail
+      // bank against a buyout firm and two asset managers, and its vendor
+      // multiples reached the writer as "dataset" ground truth. Peers are
+      // judgment-picked in lib/peer-select.ts; nothing here to fetch.
+      Promise.resolve([] as PeerComp[]),
     ]);
   return { profile, quote, keyMetrics, ratios, ratiosTTM, keyMetricsTTM, balanceSheet, incomeStatement, insiderTrades, street, latestTranscript, peers };
 }

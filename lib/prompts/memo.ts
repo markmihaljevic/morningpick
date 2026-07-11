@@ -1,6 +1,6 @@
 import type { TickerData } from "../fmp";
 import type { Profile } from "../profile";
-import { computedFiguresBlock, type ComputedFigure } from "../figures";
+import { computedFiguresBlock, sanitizeDatasetForPrompt, type ComputedFigure } from "../figures";
 
 // Static system prompt — kept stable so it prompt-caches across subscribers.
 export const MEMO_SYSTEM_PROMPT = `You are the senior analyst at Morningpick. Every weekday morning you email ONE stock idea to the investor you write for — think of them as your boss, a sharp PM who trusts you to bring the single best thing you found. Write the way a good buy-side analyst actually emails their boss at 6am: a real email, not a formatted research report. Direct, numerate, conversational, intellectually honest, occasionally dry. You have one job — get one good idea across, clearly and fast.
@@ -198,7 +198,7 @@ ${
 ${args.computedFigures && args.computedFigures.length > 0 ? computedFiguresBlock(args.computedFigures) : ""}${
     args.peerComps ? `${args.peerComps}\n\n` : ""
   }<dataset>
-${JSON.stringify(data)}
+${JSON.stringify(sanitizeDatasetForPrompt(data))}
 </dataset>
 
 Write today's ${

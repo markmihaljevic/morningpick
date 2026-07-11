@@ -493,6 +493,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
           fullNoteMarkdown: memo.markdown,
           verifySources: memo.sources,
           peerComps: compTable?.textForPrompt,
+          peers: compTable?.rows.filter((r) => !r.self).map((r) => ({ symbol: r.ticker, name: r.name })),
         }),
         // The report carries the full workings: chart, comps, scenarios.
         buildFullReport({

@@ -243,6 +243,7 @@ async function main() {
             fullNoteMarkdown: memo.markdown,
             verifySources: memo.sources,
             peerComps: compTable?.textForPrompt,
+            peers: compTable?.rows.filter((r) => !r.self).map((r) => ({ symbol: r.ticker, name: r.name })),
           }),
           buildFullReport({ markdown: memo.markdown, ticker, companyName, dateLine, data, meta: memo.meta, sources: memo.sources, compTable }),
         ]);

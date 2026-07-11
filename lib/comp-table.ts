@@ -457,7 +457,7 @@ export async function buildCompTable(args: {
     // Inline footnote markers (rule 4): sit right after the ticker on the
     // company's own line — never on a line of their own. One marker per row
     // that carries footnoted filing facts (sources/estimates with basis).
-    const MARKERS = ["†", "‡", "§", "¶", "#"];
+    const MARKERS = ["†", "‡", "§", "¶", "#", "††", "‡‡"]; // ≥ max rows (subject + 6 peers) — no reuse
     const footnoteLines: string[] = [];
     const buildRow = (r: RowData): CompTableRow => {
       const rowNotes: string[] = [];
@@ -471,7 +471,7 @@ export async function buildCompTable(args: {
       }
       let marker: string | null = null;
       if (rowNotes.length > 0) {
-        marker = MARKERS[footnoteLines.length % MARKERS.length];
+        marker = MARKERS[Math.min(footnoteLines.length, MARKERS.length - 1)];
         footnoteLines.push(`${marker} ${r.name} (${r.ticker}) — ${rowNotes.join("; ")}`);
       }
       const stage = stageOf(r);
@@ -543,7 +543,7 @@ export async function buildCompTable(args: {
         ? `\nCLEAN-COMP RULE for this sector: ${group.clean_comp_rule} Apply it before citing any peer multiple for the re-rating case; when a peer fails it, say so or leave that peer out of the range.`
         : "";
     const rationaleBlock =
-      rationales.length > 0 ? `\nWHY EACH PEER BELONGS (judgment-picked, printed under the table — these ARE the vetted comps; if you believe one fails, say so in prose rather than substituting your own):\n${rationales.map((r) => `- ${r}`).join("\n")}` : "";
+      rationales.length > 0 ? `\nWHY EACH PEER BELONGS (judgment-picked and vetted; the rationales print under the table): NEVER argue in prose that a listed peer is not a real comparable — the table and the note must agree (a fact-checker flags the contradiction). Lean on the strongest comps and simply de-emphasize weaker ones.\n${rationales.map((r) => `- ${r}`).join("\n")}` : "";
     const textForPrompt = `<peer_comps note="Comp table (${group.label}) with JUDGMENT-PICKED peers, computed at TODAY's close from the same snapshot as every other figure — quote these verbatim. 'n/m' = not meaningful (negative/non-earner).">
 ${header}
 ${lines.join("\n")}${rationaleBlock}${anchorGuidance}
