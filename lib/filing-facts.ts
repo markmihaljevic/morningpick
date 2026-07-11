@@ -70,26 +70,49 @@ export async function getFilingFacts(args: {
   // Cross-worker research claim (same pattern as the research-brief lock):
   // concurrent workers on the same subject must not both pay the web-search
   // call — and must not race divergent answers into the shared cache. The
-  // loser waits for the winner, then re-reads; still-missing cells go n/a.
+  // loser waits for the winner, then re-reads. A lock older than 15 minutes
+  // is an orphan (a killed worker) — take it over rather than losing the
+  // day's facts to a ghost.
   const lockKey = `filing-facts:${symbols[0]}:${new Date().toISOString().slice(0, 10)}`;
   const { error: lockError } = await db()
     .from("fmp_cache")
     .insert({ cache_key: lockKey, payload: { at: new Date().toISOString() } });
   if (lockError) {
-    await new Promise((r) => setTimeout(r, 25_000));
+    let stale = false;
     try {
-      const { data: retry } = await db()
-        .from("filing_facts")
-        .select("symbol, metric, value, source")
-        .in("symbol", symbols)
-        .in("metric", wantedMetrics);
-      for (const row of retry ?? []) {
-        out.get(row.symbol)?.set(row.metric, { value: row.value, source: row.source });
+      const { data: lockRow } = await db()
+        .from("fmp_cache")
+        .select("payload")
+        .eq("cache_key", lockKey)
+        .maybeSingle();
+      const at = (lockRow?.payload as { at?: string } | null)?.at;
+      stale = !at || Date.now() - new Date(at).getTime() > 15 * 60_000;
+      if (stale) {
+        await db()
+          .from("fmp_cache")
+          .update({ payload: { at: new Date().toISOString() } })
+          .eq("cache_key", lockKey);
       }
     } catch {
-      /* fall through with whatever we have */
+      /* treat as live lock */
     }
-    return out;
+    if (!stale) {
+      await new Promise((r) => setTimeout(r, 25_000));
+      try {
+        const { data: retry } = await db()
+          .from("filing_facts")
+          .select("symbol, metric, value, source")
+          .in("symbol", symbols)
+          .in("metric", wantedMetrics);
+        for (const row of retry ?? []) {
+          out.get(row.symbol)?.set(row.metric, { value: row.value, source: row.source });
+        }
+      } catch {
+        /* fall through with whatever we have */
+      }
+      return out;
+    }
+    // stale lock taken over — fall through to research
   }
 
   try {
@@ -127,7 +150,12 @@ const FACTS_SYSTEM = `You research OPERATIONAL FILING FACTS for a stock comp tab
 RULES:
 - Current-year GUIDANCE is preferred; label it (e.g. "FY26 guidance"). Latest full-year ACTUAL is the fallback, labeled (e.g. "FY25 actual").
 - Value strings stay short and table-ready: "75-85koz", "$1,000-1,200", "14.2%", "£1.1bn". Ranges kept as ranges. No sentences.
-- "n/a" when you cannot find a disclosed figure. NEVER estimate, NEVER borrow from a peer, NEVER back into a number.
+- The table does not print "n/a" — work down this ladder before giving up:
+  1. The exact metric from the company's own reporting.
+  2. The company's CLOSEST PUBLISHED EQUIVALENT, with the basis in the source label (e.g. a Kazakh bank publishes k1, the NBK-basis CET1 equivalent: value "21.0%", source "k1 (NBK basis), 1Q26 — local CET1 equivalent").
+  3. A defensible PROXY computed from the company's own filings, labeled as an estimate with its basis (e.g. "Basel III Tier 1 as CET1 proxy — no AT1 instruments outstanding, 1Q26 interims").
+  "n/a" only when all three fail — that usually means the metric cannot exist for this company at all, which the caller treats as a wrong row or column.
+- NEVER borrow a figure from a different company, NEVER invent one. An estimate must trace to the company's own published numbers, and its source label must say the basis.
 - Every non-n/a value carries a short source label: what document/period it came from.
 - If asked for stage/product: stage per the given rule (e.g. producer / ramp-up / developer), product = the company's primary commodity or business line in 1-3 words (e.g. "gold", "gold+copper", "tanker shipping").
 - Output ONLY a fenced JSON block:
@@ -147,16 +175,19 @@ async function researchFacts(
     .map((g) => `- ${g.name} (${g.ticker}): ${g.metrics.join(", ")}`)
     .join("\n");
 
+  // Hard-capped: this call sits on the delivery critical path. Six searches
+  // and two continuations cover a peer set; a 10-minute research spiral does
+  // not (observed once — the killed worker orphaned the day lock).
   const baseRequest = {
     model: cfg.FEEDBACK_MODEL,
-    max_tokens: 8000,
-    output_config: { effort: "medium" as const },
+    max_tokens: 6000,
+    output_config: { effort: "low" as const },
     system: FACTS_SYSTEM,
     tools: [
       {
         type: "web_search_20260209" as const,
         name: "web_search" as const,
-        max_uses: Math.min(8, gaps.length * 2),
+        max_uses: Math.min(6, gaps.length * 2),
       },
     ],
   };
@@ -173,7 +204,7 @@ async function researchFacts(
 
   let response = await anthropic().messages.stream({ ...baseRequest, messages }).finalMessage();
   let continuations = 0;
-  while (response.stop_reason === "pause_turn" && continuations < 4) {
+  while (response.stop_reason === "pause_turn" && continuations < 2) {
     messages.push({ role: "assistant", content: response.content });
     response = await anthropic().messages.stream({ ...baseRequest, messages }).finalMessage();
     continuations++;

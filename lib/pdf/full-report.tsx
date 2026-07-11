@@ -248,7 +248,9 @@ export function FullReport(args: FullReportArgs) {
                       color: r.self ? INK : GREY,
                     }}
                   >
+                    {/* Footnote marker sits INLINE, right after the ticker. */}
                     {compRowLabel(r.name, r.ticker)}
+                    {r.marker ? ` ${r.marker}` : ""}
                   </Text>
                   {r.tag ? (
                     <Text style={{ fontFamily: "Helvetica", fontSize: 6, color: GREY, marginTop: 1 }}>{r.tag}</Text>
@@ -270,10 +272,20 @@ export function FullReport(args: FullReportArgs) {
                 ))}
               </View>
             ))}
-            {args.compTable.footnotes.length > 0 && (
-              <Text style={{ fontFamily: "Helvetica", fontSize: 5.5, color: GREY, marginTop: 3, lineHeight: 1.5 }}>
-                {args.compTable.footnotes.join("  ·  ")}
+            {args.compTable.rationales.length > 0 && (
+              <Text style={{ fontFamily: "Times-Roman", fontSize: 8.5, color: INK, marginTop: 6, lineHeight: 1.45 }}>
+                <Text style={{ fontFamily: "Times-Bold" }}>Why each belongs: </Text>
+                {args.compTable.rationales.join(" ")}
               </Text>
+            )}
+            {args.compTable.footnotes.length > 0 && (
+              <View style={{ marginTop: 4 }}>
+                {args.compTable.footnotes.map((f, i) => (
+                  <Text key={i} style={{ fontFamily: "Helvetica", fontSize: 5.5, color: GREY, lineHeight: 1.5 }}>
+                    {f}
+                  </Text>
+                ))}
+              </View>
             )}
           </>
         )}

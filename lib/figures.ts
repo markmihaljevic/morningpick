@@ -21,8 +21,9 @@ export interface ComputedFigure {
  * statements, the listing currency from the profile, and the conversion is a
  * real day-cached FX rate — never a magnitude heuristic, because fx×100 for
  * a USD/GBp name (~75) is indistinguishable from a pence mixup by size alone.
- * If the FX rate is unavailable, FMP's own converted TTM ratios are used and
- * the snapshot says so (priceFresh=false) — approximation over garbage.
+ * If no FX rate exists even crossing through USD, price-dependent ratios
+ * are NULL — never a vendor's stale conversion. A footnote admitting a
+ * number is broken does not license printing it (the TBC 0.5x-book lesson).
  */
 export interface FiguresSnapshot {
   price: number | null; // listing units as quoted (e.g. pence)
@@ -44,7 +45,7 @@ export interface FiguresSnapshot {
   /** False → no usable balance sheet; EV figures degrade to vendor data and
    * every surface that prints them must say so. */
   evFromBalanceSheet: boolean;
-  priceFresh: boolean; // false → FX unavailable, FMP's converted TTM ratios used
+  priceFresh: boolean; // false → FX unavailable even via USD; price ratios are null
   pe: number | null;
   evEbitda: number | null;
   pb: number | null;
@@ -180,21 +181,25 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
   const priceRep = price !== null && price > 0 && fx !== null ? price / penceFactor / fx : null;
   const mcapRep = marketCap !== null && fx !== null ? marketCap / fx : null;
 
-  // Price-dependent ratios: recompute at today's close in reported currency;
-  // FMP's own converted TTM value is the labeled fallback when FX is missing.
-  const over = (perShare: unknown, fallback: unknown): number | null => {
+  // Price-dependent ratios: recompute at today's close in reported currency,
+  // or DON'T PRINT (null → n/a). There is no vendor fallback: FMP's
+  // precomputed multiples are stamped at their refresh epoch and, on pairs
+  // FMP can't convert (GEL statements vs GBp quote), essentially unconverted
+  // — TBC Bank printed 0.5x book for a 1.7x-book stock through that path,
+  // and a footnote admitting a number is stale does not license printing it.
+  const over = (perShare: unknown): number | null => {
     const v = n(perShare);
     if (priceRep !== null && v !== null) return v !== 0 ? priceRep / v : null;
-    return n(fallback);
+    return null;
   };
-  const yield_ = (perShare: unknown, fallback: unknown): number | null => {
+  const yield_ = (perShare: unknown): number | null => {
     const v = n(perShare);
     if (priceRep !== null && v !== null) return v / priceRep;
-    return n(fallback);
+    return null;
   };
 
   const pe = ((): number | null => {
-    const v = over(rt.netIncomePerShareTTM, rt.priceToEarningsRatioTTM);
+    const v = over(rt.netIncomePerShareTTM);
     return v !== null && v > 0 ? v : null; // negative earnings → no meaningful P/E
   })();
   // Balance-sheet components: one statement, one date (John's rule). FMP's
@@ -220,32 +225,28 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
     return equity - Math.max(combined, summed);
   })();
 
-  const pb = over(rt.bookValuePerShareTTM, rt.priceToBookRatioTTM);
+  const pb = over(rt.bookValuePerShareTTM);
   const pTangibleBook = ((): number | null => {
     // Canonical: market cap over (equity − goodwill − intangibles), both in
     // reported currency — market cap at today's close, book at the statement.
     if (mcapRep !== null && tangibleBookAbs !== null && tangibleBookAbs > 0) {
       return mcapRep / tangibleBookAbs;
     }
-    const v = over(rt.tangibleBookValuePerShareTTM, null);
+    const v = over(rt.tangibleBookValuePerShareTTM);
     if (v !== null && v > 0) return v;
-    // Dimensionless fallback: P/B × (book / tangible book) — never mixes currencies.
-    const pbv = n(rt.priceToBookRatioTTM);
-    const bv = n(rt.bookValuePerShareTTM);
-    const tbv = n(rt.tangibleBookValuePerShareTTM);
-    return pbv !== null && bv !== null && tbv !== null && tbv > 0 ? pbv * (bv / tbv) : null;
+    return null; // no vendor-epoch fallback — recompute or don't print
   })();
   const ps = ((): number | null => {
-    const v = over(rt.revenuePerShareTTM, rt.priceToSalesRatioTTM);
+    const v = over(rt.revenuePerShareTTM);
     return v !== null && v > 0 ? v : null;
   })();
   const pfcf = ((): number | null => {
-    const v = over(rt.freeCashFlowPerShareTTM, rt.priceToFreeCashFlowRatioTTM);
+    const v = over(rt.freeCashFlowPerShareTTM);
     return v !== null && v > 0 ? v : null;
   })();
-  const earningsYield = yield_(rt.netIncomePerShareTTM, kt.earningsYieldTTM);
-  const fcfYield = yield_(rt.freeCashFlowPerShareTTM, kt.freeCashFlowYieldTTM);
-  const divYield = yield_(rt.dividendPerShareTTM, rt.dividendYieldTTM);
+  const earningsYield = yield_(rt.netIncomePerShareTTM);
+  const fcfYield = yield_(rt.freeCashFlowPerShareTTM);
+  const divYield = yield_(rt.dividendPerShareTTM);
 
   // TTM EBITDA derived from kt's own EV/EBITDA pair (same epoch, one source).
   const ebitdaTTM = ((): number | null => {
@@ -263,12 +264,7 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
   // Fallback: period-consistent TTM ratio × TTM EBITDA, else annual × annual.
   const netDebt = ((): number | null => {
     if (totalDebt !== null && cashAndDeposits !== null) return totalDebt - cashAndDeposits;
-    const ndTTM = n(kt.netDebtToEBITDATTM);
-    if (ndTTM !== null && ebitdaTTM !== null) return ndTTM * ebitdaTTM;
-    const ndAnnual = n(ka.netDebtToEBITDA);
-    const ebitda0 = n(inc0.ebitda);
-    if (ndAnnual !== null && ebitda0 !== null && ebitda0 > 0) return ndAnnual * ebitda0;
-    return null; // negative/unknown EBITDA → net debt not inferable this way
+    return null; // no statement → no net debt; vendor netDebt is banned (cash-line-only)
   })();
 
   // True EV = market cap at today's close + net debt from the statement —
@@ -303,8 +299,7 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
       const v = enterpriseValue / ebitda0;
       return v > 0 ? v : null;
     }
-    const evx = n(kt.evToEBITDATTM) ?? n(rt.enterpriseValueMultipleTTM);
-    return evx !== null && evx > 0 ? evx : null;
+    return null; // no vendor-multiple fallback — recompute or don't print
   })();
 
   const ndToEbitda = ((): number | null => {
@@ -313,7 +308,7 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
     if (netDebt !== null && evFromBalanceSheet && ebitda0 !== null && ebitda0 > 0) {
       return netDebt / ebitda0;
     }
-    return n(kt.netDebtToEBITDATTM) ?? n(ka.netDebtToEBITDA);
+    return null; // vendor netDebt counts only the cash line — never print it
   })();
 
   const growth = (a: unknown, b: unknown): number | null => {

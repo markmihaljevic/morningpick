@@ -1,10 +1,15 @@
 import type { TickerData } from "./fmp";
 import { buildSnapshot } from "./figures";
+import { resolveMetricGroup } from "./comp-table";
 
 export interface KeyStat {
   label: string;
   value: string;
 }
+
+/** Groups where EV/EBITDA, FCF yield, and net cash are meaningless (deposit-
+ * funded balance sheets) — the strip swaps in the bank-native columns. */
+const BALANCE_SHEET_BUSINESS = new Set(["banks", "insurance_carriers", "capital_markets_ib", "specialty_finance_credit"]);
 
 /**
  * The page-one stat strip (John's spec): Price, Market cap, P/TBV, P/E,
@@ -43,6 +48,29 @@ export async function buildStatStrip(data: TickerData): Promise<KeyStat[]> {
           : x(s.pTangibleBook, 2),
     },
     { label: "P/E", value: x(s.pe) },
+  ];
+
+  // Deposit-funded balance sheets (banks, insurers): EV, FCF yield, and net
+  // cash are meaningless — the strip carries the bank-native columns instead
+  // (per the comp-metrics rule "never show EV/EBITDA for banks").
+  const p = (Array.isArray(data.profile) ? data.profile[0] : data.profile) as
+    | { industry?: string; sector?: string }
+    | undefined;
+  const group = resolveMetricGroup(p?.industry, p?.sector);
+  if (BALANCE_SHEET_BUSINESS.has(group.key)) {
+    const rote =
+      s.roe !== null && s.bookValuePerShare !== null && s.tangibleBookPerShare !== null && s.tangibleBookPerShare > 0
+        ? s.roe * (s.bookValuePerShare / s.tangibleBookPerShare)
+        : null;
+    items.push(
+      { label: "RoTE", value: rote !== null ? `${(rote * 100).toFixed(1)}%` : "n/a" },
+      { label: "P/B", value: x(s.pb, 2) },
+      { label: "Div yield", value: s.divYield !== null ? `${(s.divYield * 100).toFixed(1)}%` : "n/a" },
+    );
+    return items;
+  }
+
+  items.push(
     {
       label: s.evFromBalanceSheet ? "EV/EBITDA" : "EV/EBITDA*",
       value: x(s.evEbitda),
@@ -54,7 +82,7 @@ export async function buildStatStrip(data: TickerData): Promise<KeyStat[]> {
     s.netDebt !== null && s.netDebt < 0
       ? { label: s.evFromBalanceSheet ? "Net cash" : "Net cash*", value: money(-s.netDebt, s.repCur) }
       : { label: s.evFromBalanceSheet ? "Net debt" : "Net debt*", value: money(s.netDebt, s.repCur) },
-  ];
+  );
   return items;
 }
 

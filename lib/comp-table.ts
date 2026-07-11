@@ -1,5 +1,6 @@
 import compMetrics from "./comp-metrics-v1.json";
-import { fmpGet, fetchLatestBalanceSheet, type TickerData, type PeerComp } from "./fmp";
+import { fmpGet, fetchLatestBalanceSheet, type TickerData } from "./fmp";
+import { getPeerGroup, type SelectedPeer } from "./peer-select";
 import { logEvent } from "./db";
 import {
   buildSnapshot,
@@ -65,6 +66,8 @@ export interface CompTableRow {
   ticker: string;
   /** Stage/product tag under the name — "producer · gold". */
   tag: string | null;
+  /** Footnote marker, printed INLINE after the ticker — "(TBCG.L) †". */
+  marker: string | null;
   self: boolean;
   cleanAnchor: boolean;
   cells: string[]; // aligned with CompTable.columns
@@ -77,6 +80,8 @@ export interface CompTable {
   rows: CompTableRow[];
   /** Anchor summary for the writer — "AltynGold (ALTN.L) P/E 5.5x" lines. */
   cleanAnchorNote: string | null;
+  /** Why each peer belongs — one judgment line per peer, printed under the table. */
+  rationales: string[];
   /** Source labels for filing facts, rendered as table footnotes. */
   footnotes: string[];
   /** The block the writer and verifier both receive. */
@@ -112,6 +117,7 @@ interface RowData {
   netIncome: number | null;
   da: number | null;
   shares: number | null;
+  rationale: string | null;
   facts: Map<string, FilingFact>;
 }
 
@@ -215,15 +221,15 @@ function computedCell(key: string, r: RowData, nonEarner: boolean): string {
 }
 
 /** Fetch a peer's snapshot parts (all day-cached, shared across subscribers). */
-async function peerRowData(peer: PeerComp): Promise<RowData | null> {
+async function peerRowData(peer: SelectedPeer): Promise<RowData | null> {
   try {
-    const symbol = { symbol: peer.symbol };
+    const symbol = { symbol: peer.ticker };
     const [profile, quote, rt, kt, bs, inc] = await Promise.all([
       fmpGet<Record<string, unknown>[]>("profile", symbol),
       fmpGet<Record<string, unknown>[]>("quote", symbol),
       fmpGet<Record<string, unknown>[]>("ratios-ttm", symbol),
       fmpGet<Record<string, unknown>[]>("key-metrics-ttm", symbol),
-      fetchLatestBalanceSheet(peer.symbol),
+      fetchLatestBalanceSheet(peer.ticker),
       fmpGet<Record<string, unknown>[]>("income-statement", { ...symbol, limit: 4 }),
     ]);
     const incRows = (inc ?? []) as Record<string, unknown>[];
@@ -235,9 +241,9 @@ async function peerRowData(peer: PeerComp): Promise<RowData | null> {
       balanceSheet: bs as Record<string, unknown> | null,
       incomeStatements: incRows,
     });
-    const name = String(profile?.[0]?.companyName ?? peer.name ?? peer.symbol);
+    const name = String(profile?.[0]?.companyName ?? peer.name ?? peer.ticker);
     return {
-      ticker: peer.symbol,
+      ticker: peer.ticker,
       name,
       self: false,
       s,
@@ -246,10 +252,11 @@ async function peerRowData(peer: PeerComp): Promise<RowData | null> {
       netIncome: num(incRows[0]?.netIncome),
       da: num(incRows[0]?.depreciationAndAmortization),
       shares: num(incRows[0]?.weightedAverageShsOutDil) ?? num(incRows[0]?.weightedAverageShsOut),
+      rationale: peer.rationale,
       facts: new Map(),
     };
   } catch (e) {
-    console.error(`Peer row failed for ${peer.symbol} (dropped from table):`, e);
+    console.error(`Peer row failed for ${peer.ticker} (dropped from table):`, e);
     return null;
   }
 }
@@ -324,12 +331,29 @@ export async function buildCompTable(args: {
       netIncome: num(incRows[0]?.netIncome),
       da: num(incRows[0]?.depreciationAndAmortization),
       shares: num(incRows[0]?.weightedAverageShsOutDil) ?? num(incRows[0]?.weightedAverageShsOut),
+      rationale: null,
       facts: new Map(),
     };
 
-    // Peers: same snapshot math, same day's close, fetched via the day cache.
-    const peers = (args.data.peers ?? []).slice(0, 4);
-    const peerRows = (await Promise.all(peers.map(peerRowData))).filter(
+    // Peers are a JUDGMENT call (reasoning model, cached six months) — never
+    // FMP's stock-peers screen, which benchmarked a Georgian retail bank
+    // against a buyout firm and two asset managers. Fewer than two usable
+    // peers → no table at all; correct-or-nothing.
+    const fullProfile = profile as
+      | { industry?: string; sector?: string; companyName?: string; description?: string }
+      | undefined;
+    const peerGroup = await getPeerGroup({
+      ticker: args.ticker,
+      companyName: args.companyName ?? fullProfile?.companyName,
+      industry: fullProfile?.industry,
+      sector: fullProfile?.sector,
+      description: fullProfile?.description,
+    });
+    if (peerGroup.length < 2) {
+      console.warn(`No usable peer group for ${args.ticker} — comp table skipped.`);
+      return null;
+    }
+    const peerRows = (await Promise.all(peerGroup.slice(0, 6).map(peerRowData))).filter(
       (r): r is RowData => r !== null,
     );
 
@@ -393,37 +417,91 @@ export async function buildCompTable(args: {
       di++;
     }
 
-    // Cells.
-    const footnoteSet = new Map<string, string>();
-    const buildRow = (r: RowData): CompTableRow => {
+    // Cells for one row against a given column set.
+    const cellsFor = (r: RowData, cols: string[]): string[] => {
       const nonEarner = isNonEarner(r, Boolean(group.stage_rule));
-      const cells = columns.map((key) => {
+      return cols.map((key) => {
         const def = METRICS[key];
         if (def.kind === "filing" || def.kind === "sourced_only") {
-          const fact = r.facts.get(key);
-          if (fact && fact.value !== N_A && fact.source) {
-            footnoteSet.set(`${r.ticker}:${key}`, `${r.ticker} ${def.label}: ${fact.source}`);
-          }
-          return fact?.value ?? N_A;
+          return r.facts.get(key)?.value ?? N_A;
         }
         return computedCell(key, r, nonEarner);
       });
+    };
+
+    // NO n/a IN THE TABLE, EVER (John's rule 3): with real peers every column
+    // applies to every row. A column the SUBJECT can't fill is the wrong
+    // column — drop it. A peer that can't fill the remaining columns is the
+    // wrong row — drop it, unless that leaves fewer than two peers, in which
+    // case the offending columns go instead. Correct-or-nothing at the end.
+    columns = columns.filter((key) => !cellsFor(subject, [key]).includes(N_A));
+    let keptPeers = peerRows.filter((r) => !cellsFor(r, columns).includes(N_A));
+    if (keptPeers.length < 2) {
+      const badCols = new Set<string>();
+      for (const r of peerRows) {
+        columns.forEach((key) => {
+          if (cellsFor(r, [key]).includes(N_A)) badCols.add(key);
+        });
+      }
+      const reduced = columns.filter((key) => !badCols.has(key));
+      if (reduced.length >= 2) {
+        columns = reduced;
+        keptPeers = peerRows;
+      }
+    }
+    if (columns.length < 2 || keptPeers.length < 2) {
+      console.warn(`Comp table for ${args.ticker}: no n/a-free shape found — skipped.`);
+      return null;
+    }
+
+    // Inline footnote markers (rule 4): sit right after the ticker on the
+    // company's own line — never on a line of their own. One marker per row
+    // that carries footnoted filing facts (sources/estimates with basis).
+    const MARKERS = ["†", "‡", "§", "¶", "#"];
+    const footnoteLines: string[] = [];
+    const buildRow = (r: RowData): CompTableRow => {
+      const rowNotes: string[] = [];
+      for (const key of columns) {
+        const def = METRICS[key];
+        if (def.kind !== "filing" && def.kind !== "sourced_only") continue;
+        const fact = r.facts.get(key);
+        if (fact && fact.value !== N_A && fact.source) {
+          rowNotes.push(`${def.label} ${fact.value}: ${fact.source}`);
+        }
+      }
+      let marker: string | null = null;
+      if (rowNotes.length > 0) {
+        marker = MARKERS[footnoteLines.length % MARKERS.length];
+        footnoteLines.push(`${marker} ${r.name} (${r.ticker}) — ${rowNotes.join("; ")}`);
+      }
       const stage = stageOf(r);
       const product = productOf(r);
-      const baseTag = [stage, product].filter(Boolean).join(" · ");
-      // † marks rows whose FX pair was unavailable (FMP-converted, refresh-epoch).
-      const tag = [baseTag, r.s.priceFresh ? "" : "†"].filter(Boolean).join(" ") || null;
+      const tag = [stage, product].filter(Boolean).join(" · ") || null;
       return {
         name: r.name,
         ticker: r.ticker,
         tag,
+        marker,
         self: r.self,
         cleanAnchor: isCleanAnchor(r, subject, group),
-        cells,
+        cells: cellsFor(r, columns),
       };
     };
-    const rows = allRows.map(buildRow);
+    const rows = [subject, ...keptPeers].map(buildRow);
     if (rows.length < 3) return null; // subject + <2 peers → too thin to be honest
+
+    // Why each belongs — the judgment lines that print under the table.
+    // Labels drop legal-form prefixes ("Joint Stock Company Kaspi.kz" → "Kaspi.kz").
+    const rationaleLabel = (name: string) =>
+      name
+        .replace(/^(Joint\s+Stock\s+Company|Public\s+Joint\s+Stock\s+Company|JSC|PJSC|OJSC|AO|PT|AB)\s+/i, "")
+        .split(/\s+/)
+        .slice(0, 3)
+        .join(" ")
+        .replace(/[,.]$/, "");
+    const rationales = keptPeers
+      .filter((r) => r.rationale)
+      .map((r) => `${rationaleLabel(r.name)}: ${r.rationale}`);
 
     // Anchor note for the writer: the multiples it may cite for re-rating.
     // Structural anchors exist only for stage-rule groups; everywhere else the
@@ -441,22 +519,19 @@ export async function buildCompTable(args: {
     }
 
     const columnDefs = columns.map((key) => ({ key, label: METRICS[key].label }));
-    const footnotes = [...footnoteSet.values()].slice(0, 10);
+    const footnotes = [...footnoteLines].slice(0, 8);
     if (columns.includes("div_yield")) {
-      footnotes.unshift("Div Yield is trailing-twelve-month and may include special dividends.");
+      footnotes.push("Div Yield is trailing-twelve-month and may include special dividends.");
     }
     if (columns.includes("p_ffo")) {
-      footnotes.unshift("*P/FFO approximated as NI + D&A where the company does not report FFO.");
-    }
-    if (rows.some((r) => r.tag?.includes("†"))) {
-      footnotes.unshift("† FX pair unavailable — multiples are FMP's own conversion at its last refresh, not today's close.");
+      footnotes.push("*P/FFO approximated as NI + D&A where the company does not report FFO.");
     }
 
     // The block writer AND verifier receive — same table, same epoch.
     const header = ["Company", ...columnDefs.map((c) => c.label)].join(" | ");
     const lines = rows.map((r) =>
       [
-        `${r.name} (${r.ticker})${r.self ? " [SUBJECT]" : ""}${r.tag ? ` [${r.tag}]` : ""}${r.cleanAnchor ? " [clean comp]" : ""}`,
+        `${r.name} (${r.ticker})${r.marker ? ` ${r.marker}` : ""}${r.self ? " [SUBJECT]" : ""}${r.tag ? ` [${r.tag}]` : ""}${r.cleanAnchor ? " [clean comp]" : ""}`,
         ...r.cells,
       ].join(" | "),
     );
@@ -467,9 +542,12 @@ export async function buildCompTable(args: {
       : group.clean_comp_rule
         ? `\nCLEAN-COMP RULE for this sector: ${group.clean_comp_rule} Apply it before citing any peer multiple for the re-rating case; when a peer fails it, say so or leave that peer out of the range.`
         : "";
-    const textForPrompt = `<peer_comps note="Sector-aware comp table (${group.label}), computed at TODAY's close from the same snapshot as every other figure — quote these verbatim. 'n/m' = not meaningful (non-earner or negative), 'n/a' = not disclosed.">
+    const rationaleBlock =
+      rationales.length > 0 ? `\nWHY EACH PEER BELONGS (judgment-picked, printed under the table — these ARE the vetted comps; if you believe one fails, say so in prose rather than substituting your own):\n${rationales.map((r) => `- ${r}`).join("\n")}` : "";
+    const textForPrompt = `<peer_comps note="Comp table (${group.label}) with JUDGMENT-PICKED peers, computed at TODAY's close from the same snapshot as every other figure — quote these verbatim. 'n/m' = not meaningful (negative/non-earner).">
 ${header}
-${lines.join("\n")}${anchorGuidance}
+${lines.join("\n")}${rationaleBlock}${anchorGuidance}
+${footnoteLines.length > 0 ? footnoteLines.join("\n") : ""}
 </peer_comps>`;
 
     return {
@@ -478,6 +556,7 @@ ${lines.join("\n")}${anchorGuidance}
       columns: columnDefs,
       rows,
       cleanAnchorNote,
+      rationales,
       footnotes,
       textForPrompt,
     };
