@@ -15,7 +15,7 @@ import type { Profile } from "../lib/profile";
 import { type ScreenParams } from "../lib/screens";
 import { getCoverageContext, coverageForPrompt } from "../lib/coverage";
 import { decideNote, fallbackNote, type NoteKind } from "../lib/desk-editor";
-import { selectIdeaWithPreflight, updateWatchlist } from "../lib/select-idea";
+import { selectIdeaWithPreflight, updateWatchlist, hasReportedSince } from "../lib/select-idea";
 import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "../lib/fmp";
 import { generateVerifiedMemo } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
@@ -27,6 +27,7 @@ import { buildTearSheet } from "../lib/tear-sheet";
 import { buildFullReport } from "../lib/full-report";
 import { buildCompTable } from "../lib/comp-table";
 import { writeCoverNote, bareTicker } from "../lib/cover-note";
+import { normalizeCompanyName } from "../lib/company-key";
 import { config } from "../lib/config";
 import { sendEmail, replyAddress } from "../lib/resend";
 
@@ -98,19 +99,29 @@ async function main() {
     const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
       .toISOString()
       .slice(0, 10);
-    const excluded = coverageItems.filter((c) => c.date >= since).map((c) => c.ticker);
+    const recentCoverage = coverageItems.filter((c) => c.date >= since);
+    const excluded: string[] = [];
+    for (const c of recentCoverage) {
+      if (!(await hasReportedSince(c.ticker, c.date))) excluded.push(c.ticker);
+    }
     // Identity-keyed sent history (no-repeat rule 1) — mirrors the worker.
     const { data: sentRows } = await db()
       .from("memos")
-      .select("id, ticker, company_key, delivery_date")
+      .select("id, ticker, company_key, company_name, delivery_date")
       .eq("subscriber_id", subscriber.id)
       .neq("ticker", "REVIEW")
       .gte("delivery_date", new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10))
       .order("delivery_date", { ascending: false })
-      .limit(60);
+      .limit(400); // must cover the full window for DAILY subscribers (~285 sends/400d)
     const sentCompanies = (sentRows ?? [])
       .filter((r) => r.company_key && r.company_key !== "kind:review")
-      .map((r) => ({ key: r.company_key as string, ticker: r.ticker as string, memoId: r.id as string, date: r.delivery_date as string }));
+      .map((r) => ({
+        key: r.company_key as string,
+        nameKey: r.company_name ? `name:${normalizeCompanyName(r.company_name as string)}` : null,
+        ticker: r.ticker as string,
+        memoId: r.id as string,
+        date: r.delivery_date as string,
+      }));
     console.error("Running idea funnel with pre-flight…");
     const idea = await selectIdeaWithPreflight({
       subscriberId: subscriber.id,

@@ -12,6 +12,9 @@ import { preflightCheck, type PreflightResult } from "./preflight";
 /** A company already sent to this subscriber — identity-keyed (rule 1). */
 export interface SentCompany {
   key: string; // ISIN or normalized-name key
+  /** Name-based second key: DR/ADR lines carry different ISINs than local
+   * ordinaries, so identity must match on EITHER key. */
+  nameKey?: string | null;
   ticker: string; // the listing that was sent
   memoId: string;
   date: string; // delivery date
@@ -38,23 +41,37 @@ async function checkNoRepeat(
   | { verdict: "spread"; prior: SentCompany; detail: string }
 > {
   const identity = identityFromProfile(data.profile);
-  const prior = sentByKey.get(identity.key);
+  // Match on EITHER key: a GDR's US ISIN differs from the local line's home
+  // ISIN, but the normalized name catches the pair.
+  const prior =
+    sentByKey.get(identity.key) ??
+    (identity.nameKey ? sentByKey.get(identity.nameKey) : undefined);
   if (!prior) return { verdict: "fresh" };
 
-  // Results-reset (rule 2): a results RELEASE after the send date. An
-  // earnings row with an actual EPS dated after the send is a release; a
-  // statement PERIOD ending after the send also implies one.
+  // Results-reset (rule 2): a results RELEASE after the send date, detected
+  // three ways — an earnings row with actual EPS dated after the send, a
+  // statement FILED after the send (filingDate covers releases for periods
+  // that ended before the send), or a statement PERIOD ending after it.
   const sentAt = prior.date;
   const earnings = (data.street?.earnings ?? []) as { date?: string; epsActual?: number | null }[];
   const releasedSince = (Array.isArray(earnings) ? earnings : []).some(
     (e) => e.date && e.date > sentAt && e.epsActual !== null && e.epsActual !== undefined,
   );
   const inc0 = (Array.isArray(data.incomeStatement) ? data.incomeStatement[0] : undefined) as
-    | { date?: string }
+    | { date?: string; fillingDate?: string; filingDate?: string; acceptedDate?: string }
     | undefined;
-  const bs = data.balanceSheet as { date?: string } | null;
+  const bs = data.balanceSheet as
+    | { date?: string; fillingDate?: string; filingDate?: string; acceptedDate?: string }
+    | null;
+  const filedAfter = (row: typeof inc0 | typeof bs): boolean => {
+    const filed = row?.fillingDate ?? row?.filingDate ?? row?.acceptedDate;
+    return typeof filed === "string" && filed.slice(0, 10) > sentAt;
+  };
   const periodSince =
-    (inc0?.date !== undefined && inc0.date > sentAt) || (bs?.date !== undefined && bs.date > sentAt);
+    (inc0?.date !== undefined && inc0.date > sentAt) ||
+    (bs?.date !== undefined && bs.date > sentAt) ||
+    filedAfter(inc0) ||
+    filedAfter(bs);
   if (releasedSince || periodSince) {
     return {
       verdict: "requalified",
@@ -81,6 +98,28 @@ async function checkNoRepeat(
     prior,
     reason: `already sent ${prior.date} (${identity.key}); no new reported period since`,
   };
+}
+
+/**
+ * Cheap release check for pool-level exclusions (rule 2): has this ticker
+ * released results since the date? Day-cached earnings rows; fail-soft to
+ * false (stays excluded — conservative, never a wrongful resend).
+ */
+export async function hasReportedSince(ticker: string, sinceDate: string): Promise<boolean> {
+  try {
+    const rows = await fmpGetEarnings(ticker);
+    return rows.some((e) => e.date && e.date > sinceDate && e.epsActual !== null && e.epsActual !== undefined);
+  } catch {
+    return false;
+  }
+}
+async function fmpGetEarnings(ticker: string): Promise<{ date?: string; epsActual?: number | null }[]> {
+  const { fmpGet } = await import("./fmp");
+  const rows = await fmpGet<{ date?: string; epsActual?: number | null }[]>("earnings", {
+    symbol: ticker,
+    limit: 4,
+  });
+  return Array.isArray(rows) ? rows : [];
 }
 
 const WATCHLIST_MAX_AGE_DAYS = 45;
@@ -238,11 +277,16 @@ export async function selectIdeaWithPreflight(args: {
   ];
   const sentByKey = new Map<string, SentCompany>();
   for (const s of args.sentCompanies ?? []) {
-    // Most recent send per company wins (rows arrive newest-first).
+    // Most recent send per company wins (rows arrive newest-first). Indexed
+    // under BOTH identities so a DR line matches its local ordinary.
     if (!sentByKey.has(s.key)) sentByKey.set(s.key, s);
+    if (s.nameKey && !sentByKey.has(s.nameKey)) sentByKey.set(s.nameKey, s);
   }
 
-  for (const ticker of walkOrder.slice(0, MAX_PREFLIGHT_ATTEMPTS)) {
+  let attemptsUsed = 0;
+  let lastBlocked: { ticker: string; data: TickerData } | null = null;
+  for (const ticker of walkOrder) {
+    if (attemptsUsed >= MAX_PREFLIGHT_ATTEMPTS) break;
     const isPick = ticker.toUpperCase() === pick.ticker.toUpperCase();
     const rankInfo = top.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase());
     let rationale = isPick
@@ -260,8 +304,10 @@ export async function selectIdeaWithPreflight(args: {
         subscriberId: args.subscriberId,
         payload: { ticker, prior: repeat.prior.ticker, priorDate: repeat.prior.date, reason: repeat.reason },
       });
-      continue; // a second listing is not a second idea — next candidate
+      lastBlocked = { ticker, data };
+      continue; // a second listing is not a second idea — next candidate (no slot consumed)
     }
+    attemptsUsed++;
     if (repeat.verdict === "requalified") {
       requalifiedFrom = repeat.prior;
       rationale += ` — RE-QUALIFIED: ${repeat.development}`;
@@ -311,7 +357,24 @@ export async function selectIdeaWithPreflight(args: {
     }
   }
 
-  if (!best) throw new Error("Idea funnel produced no candidates.");
+  if (!best) {
+    // Every walkable candidate was blocked by the no-repeat gate (or the
+    // walk was empty). Return ok:false so the caller falls back to
+    // stewarding the book — never a hard-failed delivery over a full inbox.
+    if (lastBlocked) {
+      return {
+        ok: false,
+        ticker: lastBlocked.ticker,
+        rationale: "every candidate on today's ranked list is a company already sent (no new reported period) — steward the book instead",
+        data: lastBlocked.data,
+        preflight: { write: false, expectedConviction: 0, reason: "all candidates blocked by the no-repeat gate" },
+        attempts,
+        flagged,
+        upcomingEarnings,
+      };
+    }
+    throw new Error("Idea funnel produced no candidates.");
+  }
   return { ...best, attempts };
 }
 
