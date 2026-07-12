@@ -17,6 +17,7 @@ import { greetingName } from "@/lib/greeting";
 import { buildTearSheet } from "@/lib/tear-sheet";
 import { buildFullReport } from "@/lib/full-report";
 import { buildCompTable } from "@/lib/comp-table";
+import { identityFromProfile } from "@/lib/company-key";
 import { writeCoverNote, bareTicker } from "@/lib/cover-note";
 import {
   getCoverageContext,
@@ -200,12 +201,33 @@ async function buildPlan(
   let secondLookContext: SavedPlan["secondLookContext"];
   let reviewContext: SavedPlan["reviewContext"];
   let data: TickerData | null = null;
+  let kindOverride: NoteKind | null = null;
 
   if (decision.kind === "idea") {
     const since = new Date(Date.now() - REPEAT_EXCLUSION_DAYS * 24 * 3600 * 1000)
       .toISOString()
       .slice(0, 10);
     const excluded = coverageItems.filter((c) => c.date >= since).map((c) => c.ticker);
+
+    // Identity-keyed sent history (no-repeat rule 1): every listing of a
+    // sent company is consumed by one send — THX.L and THX.V are one idea.
+    const { data: sentRows } = await db()
+      .from("memos")
+      .select("id, ticker, company_key, delivery_date")
+      .eq("subscriber_id", subscriberId)
+      .neq("ticker", "REVIEW")
+      .gte("delivery_date", new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10))
+      .order("delivery_date", { ascending: false })
+      .limit(60);
+    const sentCompanies = (sentRows ?? [])
+      .filter((r) => r.company_key && r.company_key !== "kind:review")
+      .map((r) => ({
+        key: r.company_key as string,
+        ticker: r.ticker as string,
+        memoId: r.id as string,
+        date: r.delivery_date as string,
+      }));
+
     const idea = await selectIdeaWithPreflight({
       subscriberId,
       profile,
@@ -215,6 +237,7 @@ async function buildPlan(
       excluded,
       recentTickers: coverageItems.slice(0, 10).map((c) => c.ticker),
       taste,
+      sentCompanies,
     });
 
     if (!idea.ok) {
@@ -246,6 +269,28 @@ async function buildPlan(
       selectionRationale = idea.ok
         ? idea.rationale
         : `${idea.rationale} — NOTE: pre-flight scored this ${idea.preflight.expectedConviction}/10 (${idea.preflight.reason}); write it with honest conviction, do not oversell.`;
+
+      // Rule 3: a company that re-qualified on new results writes as a
+      // SECOND LOOK — the note opens with what changed since the last send
+      // and reconciles any figure quoted from that note onto a consistent
+      // basis. Never a fresh pitch that pretends the history isn't there.
+      if (idea.requalifiedFrom) {
+        const { data: original } = await db()
+          .from("memos")
+          .select("content_md")
+          .eq("id", idea.requalifiedFrom.memoId)
+          .single();
+        kindOverride = "second_look";
+        secondLookContext = {
+          originalMarkdown: original?.content_md ?? "(original note unavailable)",
+          originalDate: idea.requalifiedFrom.date,
+          development: `New reported results since the ${idea.requalifiedFrom.date} note (sent as ${idea.requalifiedFrom.ticker}). Open with what changed, and reconcile every figure you quote from that note onto today's consistent basis — if a prior figure was mis-based, correct it plainly.`,
+        };
+        await logEvent("norepeat_requalified", {
+          subscriberId,
+          payload: { ticker, prior: idea.requalifiedFrom.ticker, priorDate: idea.requalifiedFrom.date },
+        });
+      }
     }
   }
 
@@ -307,7 +352,7 @@ async function buildPlan(
     decision.kind === "review" ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
 
   return {
-    kind: decision.kind,
+    kind: kindOverride ?? decision.kind,
     ticker,
     companyName,
     selectionRationale,
@@ -553,6 +598,9 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       subscriber_id: subscriber.id,
       delivery_date: delivery.delivery_date,
       ticker,
+      // Identity key (no-repeat rule 1): one send consumes the company on
+      // every exchange it trades — THX.L and THX.V share this key.
+      company_key: memoKind === "review" ? "kind:review" : identityFromProfile(data.profile).key,
       company_name: companyName ?? null,
       title,
       content_md: memo.markdown,

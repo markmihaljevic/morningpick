@@ -6,7 +6,82 @@ import { ensureFactorTable, loadFactorRows } from "./factor-table";
 import { scoreCandidates, deriveWeights } from "./scoring";
 import { pickFromRanked } from "./pick";
 import { fetchTickerData, fetchUpcomingEarnings, type TickerData } from "./fmp";
+import { identityFromProfile, crossListingSpread } from "./company-key";
 import { preflightCheck, type PreflightResult } from "./preflight";
+
+/** A company already sent to this subscriber — identity-keyed (rule 1). */
+export interface SentCompany {
+  key: string; // ISIN or normalized-name key
+  ticker: string; // the listing that was sent
+  memoId: string;
+  date: string; // delivery date
+}
+
+/** Divergence beyond FX that turns a cross-listing into its own idea. */
+const SPREAD_THRESHOLD = 0.04;
+
+/**
+ * The no-repeat gate (John's rules 1-2-4): a company already sent stays
+ * ineligible on EVERY listing until a new reported financial period — a
+ * second quote line is never new information. The one exception without new
+ * fundamentals: a cross-listing spread wider than a few percent beyond FX,
+ * in which case the spread itself is the idea.
+ */
+async function checkNoRepeat(
+  data: TickerData,
+  candidateTicker: string,
+  sentByKey: Map<string, SentCompany>,
+): Promise<
+  | { verdict: "fresh" }
+  | { verdict: "blocked"; prior: SentCompany; reason: string }
+  | { verdict: "requalified"; prior: SentCompany; development: string }
+  | { verdict: "spread"; prior: SentCompany; detail: string }
+> {
+  const identity = identityFromProfile(data.profile);
+  const prior = sentByKey.get(identity.key);
+  if (!prior) return { verdict: "fresh" };
+
+  // Results-reset (rule 2): a results RELEASE after the send date. An
+  // earnings row with an actual EPS dated after the send is a release; a
+  // statement PERIOD ending after the send also implies one.
+  const sentAt = prior.date;
+  const earnings = (data.street?.earnings ?? []) as { date?: string; epsActual?: number | null }[];
+  const releasedSince = (Array.isArray(earnings) ? earnings : []).some(
+    (e) => e.date && e.date > sentAt && e.epsActual !== null && e.epsActual !== undefined,
+  );
+  const inc0 = (Array.isArray(data.incomeStatement) ? data.incomeStatement[0] : undefined) as
+    | { date?: string }
+    | undefined;
+  const bs = data.balanceSheet as { date?: string } | null;
+  const periodSince =
+    (inc0?.date !== undefined && inc0.date > sentAt) || (bs?.date !== undefined && bs.date > sentAt);
+  if (releasedSince || periodSince) {
+    return {
+      verdict: "requalified",
+      prior,
+      development: `New reported results since the ${prior.date} note on ${prior.ticker} — the company re-qualifies; open with what changed and reconcile any figure from that note onto today's consistent basis.`,
+    };
+  }
+
+  // Cross-listing spread (rule 4): only meaningful when the candidate is a
+  // DIFFERENT listing of the sent company.
+  if (candidateTicker.toUpperCase() !== prior.ticker.toUpperCase()) {
+    const spread = await crossListingSpread(candidateTicker, prior.ticker);
+    if (spread && spread.gapPct > SPREAD_THRESHOLD) {
+      return { verdict: "spread", prior, detail: spread.detail };
+    }
+    return {
+      verdict: "blocked",
+      prior,
+      reason: `same company as ${prior.ticker} sent ${prior.date} (${identity.key}); no new reported period, and the listings sit ${spread ? (spread.gapPct * 100).toFixed(1) + "%" : "≈0%"} apart — a second quote line is not a second idea`,
+    };
+  }
+  return {
+    verdict: "blocked",
+    prior,
+    reason: `already sent ${prior.date} (${identity.key}); no new reported period since`,
+  };
+}
 
 const WATCHLIST_MAX_AGE_DAYS = 45;
 
@@ -42,6 +117,9 @@ export interface IdeaSelection {
   /** Selector-flagged near-misses + pre-flight rejects — pipeline food. */
   flagged: { ticker: string; reason: string }[];
   upcomingEarnings: Record<string, string>;
+  /** Set when a previously-sent company re-qualified on new results — the
+   * note must open with what changed and reconcile the earlier figures. */
+  requalifiedFrom?: SentCompany;
 }
 
 export async function selectIdeaWithPreflight(args: {
@@ -53,6 +131,8 @@ export async function selectIdeaWithPreflight(args: {
   excluded: string[];
   recentTickers: string[];
   taste?: Taste;
+  /** Identity-keyed sent history (rule 1) — every listing of a sent company. */
+  sentCompanies?: SentCompany[];
 }): Promise<IdeaSelection> {
   const screens = await getSubscriberScreens(
     args.subscriberId,
@@ -156,13 +236,39 @@ export async function selectIdeaWithPreflight(args: {
     pick.ticker,
     ...walkPool.map((c) => c.ticker).filter((t) => t.toUpperCase() !== pick.ticker.toUpperCase()),
   ];
+  const sentByKey = new Map<string, SentCompany>();
+  for (const s of args.sentCompanies ?? []) {
+    // Most recent send per company wins (rows arrive newest-first).
+    if (!sentByKey.has(s.key)) sentByKey.set(s.key, s);
+  }
+
   for (const ticker of walkOrder.slice(0, MAX_PREFLIGHT_ATTEMPTS)) {
     const isPick = ticker.toUpperCase() === pick.ticker.toUpperCase();
     const rankInfo = top.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase());
-    const rationale = isPick
+    let rationale = isPick
       ? pick.rationale
       : `Next on the ranked list (factor score ${Math.round(rankInfo?.composite ?? 0)}) after the pick failed the conviction gate.`;
     const data = await fetchTickerData(ticker);
+
+    // The no-repeat gate (rules 1-2-4): identity is the company, not the
+    // ticker — THX.L and THX.V are one idea. Runs BEFORE pre-flight so a
+    // blocked repeat never costs a conviction-gate attempt's LLM call.
+    let requalifiedFrom: SentCompany | undefined;
+    const repeat = await checkNoRepeat(data, ticker, sentByKey);
+    if (repeat.verdict === "blocked") {
+      await logEvent("norepeat_blocked", {
+        subscriberId: args.subscriberId,
+        payload: { ticker, prior: repeat.prior.ticker, priorDate: repeat.prior.date, reason: repeat.reason },
+      });
+      continue; // a second listing is not a second idea — next candidate
+    }
+    if (repeat.verdict === "requalified") {
+      requalifiedFrom = repeat.prior;
+      rationale += ` — RE-QUALIFIED: ${repeat.development}`;
+    } else if (repeat.verdict === "spread") {
+      rationale += ` — CROSS-LISTING SPREAD IDEA: ${repeat.detail}. The spread itself is the idea; quantify both prices and the gap, referencing the ${repeat.prior.date} note on ${repeat.prior.ticker}.`;
+    }
+
     const preflight = await preflightCheck({
       ticker,
       data,
@@ -189,6 +295,7 @@ export async function selectIdeaWithPreflight(args: {
       attempts,
       flagged,
       upcomingEarnings,
+      requalifiedFrom,
     };
     if (passes) return result;
 

@@ -99,6 +99,18 @@ async function main() {
       .toISOString()
       .slice(0, 10);
     const excluded = coverageItems.filter((c) => c.date >= since).map((c) => c.ticker);
+    // Identity-keyed sent history (no-repeat rule 1) — mirrors the worker.
+    const { data: sentRows } = await db()
+      .from("memos")
+      .select("id, ticker, company_key, delivery_date")
+      .eq("subscriber_id", subscriber.id)
+      .neq("ticker", "REVIEW")
+      .gte("delivery_date", new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10))
+      .order("delivery_date", { ascending: false })
+      .limit(60);
+    const sentCompanies = (sentRows ?? [])
+      .filter((r) => r.company_key && r.company_key !== "kind:review")
+      .map((r) => ({ key: r.company_key as string, ticker: r.ticker as string, memoId: r.id as string, date: r.delivery_date as string }));
     console.error("Running idea funnel with pre-flight…");
     const idea = await selectIdeaWithPreflight({
       subscriberId: subscriber.id,
@@ -109,6 +121,7 @@ async function main() {
       excluded,
       recentTickers: coverageItems.slice(0, 10).map((c) => c.ticker),
       taste,
+      sentCompanies,
     });
     for (const a of idea.attempts) {
       console.error(
