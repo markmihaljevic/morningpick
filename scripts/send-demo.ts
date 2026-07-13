@@ -26,7 +26,7 @@ import { greetingName } from "../lib/greeting";
 import { buildTearSheet } from "../lib/tear-sheet";
 import { buildFullReport } from "../lib/full-report";
 import { buildCompTable } from "../lib/comp-table";
-import { writeCoverNote, bareTicker } from "../lib/cover-note";
+import { writeCoverNote, fallbackCoverBody, bareTicker } from "../lib/cover-note";
 import { normalizeCompanyName } from "../lib/company-key";
 import { config } from "../lib/config";
 import { sendEmail, replyAddress } from "../lib/resend";
@@ -317,11 +317,12 @@ async function main() {
       : `${bareTicker(ticker)}: ${hook || "today's idea"}`);
   const coverBody =
     cover?.body ||
-    `${memo.meta?.one_liner ?? "My latest idea for you."}${
-      fullReport !== null
-        ? "\n\nThe full report is attached — the complete argument, the numbers, and the sources are all in there."
-        : ""
-    }`;
+    fallbackCoverBody({
+      isReview: memoKind === "review",
+      oneLiner: memo.meta?.one_liner,
+      onePager: tearSheet !== null,
+      fullReport: fullReport !== null,
+    });
   console.error(`Cover note: ${cover ? `${cover.body.split(/\s+/).length} words` : "FALLBACK"} — subject "${coverSubject}"`);
 
   const html = renderMemoEmail({

@@ -18,7 +18,7 @@ import { buildTearSheet } from "@/lib/tear-sheet";
 import { buildFullReport } from "@/lib/full-report";
 import { buildCompTable } from "@/lib/comp-table";
 import { identityFromProfile, normalizeCompanyName } from "@/lib/company-key";
-import { writeCoverNote, bareTicker } from "@/lib/cover-note";
+import { writeCoverNote, fallbackCoverBody, bareTicker } from "@/lib/cover-note";
 import {
   getCoverageContext,
   coverageForPrompt,
@@ -583,13 +583,12 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
         : `${bareTicker(ticker)}: ${hook || "today's idea"}`);
     const coverBody =
       cover?.body ||
-      `${memo.meta?.one_liner ?? "My latest idea for you."}${
-        fullReport !== null
-          ? tearSheet !== null
-            ? "\n\nThe one-page memo and the full report are attached — the complete argument, the numbers, and the sources are all in there."
-            : "\n\nThe full report is attached — the complete argument, the numbers, and the sources are all in there."
-          : ""
-      }`;
+      fallbackCoverBody({
+        isReview: memoKind === "review",
+        oneLiner: memo.meta?.one_liner,
+        onePager: tearSheet !== null,
+        fullReport: fullReport !== null,
+      });
     title = coverSubject; // the DB title + email subject = what the reader saw
 
     memoId = crypto.randomUUID();

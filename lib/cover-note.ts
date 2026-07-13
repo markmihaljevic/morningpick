@@ -71,24 +71,38 @@ export function coverNoteRegisterIssues(
   }
   if (paragraphs.length > 4) issues.push(`${paragraphs.length} paragraphs — collapse to about three.`);
 
-  // Rule 1: decimal precision belongs in the PDF. Decimal PRICES ("512.6p",
-  // "€43.99", "$1.05") and decimal PERCENTS ("3.6%") are banned; one-decimal
-  // MULTIPLES ("2.4x") read as speech and pass.
-  const decimalPrices = body.match(/(?:[£€$]|C\$|A\$)\s?\d+\.\d+|\b\d+\.\d+\s?p\b/g) ?? [];
-  const decimalPercents = body.match(/\b\d+\.\d+\s?%/g) ?? [];
-  for (const m of [...decimalPrices, ...decimalPercents]) {
-    issues.push(`Exact figure "${m}" — round it the way a person speaks ("about ${m.replace(/\.\d+/, "")}"); the decimals live in the PDF.`);
+  // Rule 1: decimal precision belongs in the PDF. A decimal number passes only
+  // when it reads as speech — a multiple ("2.4x", "2.4 times") or a rounded
+  // magnitude ("£1.5bn", "10.5 million"). Everything else is an exact figure,
+  // whatever the notation: decimal percents ("3.6%"), symbol prices ("€43.99"),
+  // pence ("512.6p"), currency-code prices ("SEK 43.99"), worded ("43.99
+  // euros"), or bare ("closed at 43.99"). Suffix-based on purpose: matching
+  // known currency prefixes is how "SEK 43.99" once shipped.
+  const SPOKEN_DECIMAL_SUFFIX = /^(x|times|k|m|bn|million|billion|trillion)$/i;
+  for (const m of body.matchAll(/\d+(?:,\d{3})*\.\d+\s?([a-z%]+)?/gi)) {
+    if (m[1] && SPOKEN_DECIMAL_SUFFIX.test(m[1])) continue;
+    issues.push(`Exact figure "${m[0].trim()}" — round it the way a person speaks; the decimals live in the PDF.`);
   }
 
-  // Rule 1: number budget. Count numeric tokens, excluding bare years and
-  // calendar dates ("July 28") which are dates, not figures.
-  const numericCount = (body.match(/\b\d[\d,.]*(?:x|%|p|m|bn|k)?\b/gi) ?? []).filter((t) => {
-    const clean = t.replace(/[,.]/g, "");
+  // Rule 1: number budget. Count numeric tokens — prices ("£40", "510p"),
+  // percents ("14%"), multiples ("10x"), magnitudes ("1.5bn") — excluding bare
+  // years and calendar dates ("July 28"), which are dates, not figures.
+  // No trailing \b: a word boundary cannot exist after "%", so it silently
+  // dropped the suffix and "14%" counted as an excluded bare "14".
+  const numericCount = (
+    body.match(
+      /(?:[£€$¥]\s?)?\b\d[\d,]*(?:\.\d+)?\s?(?:%|x\b|p\b|pence\b|times\b|k\b|m\b|bn\b|million\b|billion\b)?/gi,
+    ) ?? []
+  ).filter((t) => {
+    const clean = t.replace(/[\s,]/g, "");
     if (/^(19|20)\d\d$/.test(clean)) return false; // year
     if (/^\d{1,2}$/.test(clean)) return false; // day-of-month / small ordinal
     return true;
   }).length;
-  if (numericCount > 8) {
+  // A register-compliant review legitimately carries more tokens than an idea
+  // day: 2-3 for the add plus one per quiet name.
+  const budget = isReview ? 10 : 8;
+  if (numericCount > budget) {
     issues.push(`${numericCount} numeric tokens — someone writing from memory uses a handful (2-3 for the actionable name, at most 1 each elsewhere).`);
   }
 
@@ -176,6 +190,38 @@ export async function writeCoverNote(args: {
     console.error("Cover-note write failed (fail-open):", e);
     return null;
   }
+}
+
+/**
+ * Register-safe fallback body for when writeCoverNote returns null (refusal,
+ * three register failures, or API error). Review days get a static book
+ * read-through framing — never "my latest idea" under a "Your book —" subject.
+ * The one_liner never went through the register gate, so it is used only when
+ * it carries no decimal figure. Deliberately short: on the degraded path a
+ * thin honest note beats a wrong one.
+ */
+export function fallbackCoverBody(args: {
+  isReview: boolean;
+  oneLiner: string | null | undefined;
+  onePager: boolean;
+  fullReport: boolean;
+}): string {
+  const attachLine =
+    args.onePager && args.fullReport
+      ? "The one-page memo and the full report are attached — the complete argument, the numbers, and the sources are all in there."
+      : args.fullReport
+        ? "The full report is attached — the complete argument, the numbers, and the sources are all in there."
+        : args.onePager
+          ? "The one-page memo is attached — the argument and the numbers are in there."
+          : "";
+  if (args.isReview) {
+    const lead =
+      "A read-through of the book this morning rather than a fresh idea — where each name stands and whether anything has changed since I wrote it up.";
+    return attachLine ? `${lead}\n\n${attachLine}` : `${lead}\n\nNothing here changes my mind on the names you hold.`;
+  }
+  const safeOneLiner =
+    args.oneLiner && !/\d+(?:,\d{3})*\.\d+/.test(args.oneLiner) ? args.oneLiner : "My latest idea for you.";
+  return attachLine ? `${safeOneLiner}\n\n${attachLine}` : safeOneLiner;
 }
 
 /** The ticker without its exchange suffix — "BARC.L" → "BARC" — for subjects. */

@@ -14,7 +14,7 @@ import { getCoverageContext, coverageForPrompt, checkFollowupTrigger } from "../
 import { fetchTickerData } from "../lib/fmp";
 import { generateVerifiedMemo } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
-import { writeCoverNote, bareTicker } from "../lib/cover-note";
+import { writeCoverNote, fallbackCoverBody, bareTicker } from "../lib/cover-note";
 import { buildTearSheet } from "../lib/tear-sheet";
 import { buildCompTable } from "../lib/comp-table";
 import { buildFullReport } from "../lib/full-report";
@@ -117,9 +117,12 @@ async function main() {
   const coverSubject = cover?.subject || `${bareTicker(target.ticker)}: ${hook || "an update"}`;
   const coverBody =
     cover?.body ||
-    `${memo.meta?.one_liner ?? "An update on a name I flagged for you."}${
-      fullReport !== null ? "\n\nThe full report is attached." : ""
-    }`;
+    fallbackCoverBody({
+      isReview: false,
+      oneLiner: memo.meta?.one_liner,
+      onePager: tearSheet !== null,
+      fullReport: fullReport !== null,
+    });
 
   const html = renderMemoEmail({
     coverNote: coverBody,
