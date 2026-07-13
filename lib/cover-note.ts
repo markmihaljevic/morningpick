@@ -24,8 +24,8 @@ const COVER_SCHEMA = {
     body: {
       type: "string",
       description:
-        "The email body: about three short paragraphs of 2-3 sentences each, separated by BLANK LINES, " +
-        "120-180 words total, one thought per paragraph. NO greeting, NO sign-off, NO reply invitation " +
+        "The email body: three short paragraphs of about 2 sentences each, separated by BLANK LINES, " +
+        "target ~150 words and never over 180, one thought per paragraph. NO greeting, NO sign-off, NO reply invitation " +
         "(all added around it).",
     },
   },
@@ -38,7 +38,7 @@ const COVER_SYSTEM = `You are an investment analyst writing the short morning em
 REGISTER RULES (every one is checked):
 1. FROM MEMORY: the pitch in plain words, then rounded numbers the way a person speaks — "about 510p", "roughly 14% below my pitch", "just above tangible book", "near 10x this year's earnings". NEVER exact figures: no "512.6p", no "€43.99", no "3.6%" — decimals belong in the PDF. At most two or three numbers for the ONE name you'd act on; at most one number for anyone else.
 2. VALUATION ANCHORS, ABSOLUTE NOT RELATIVE: one or two of your numbers must be P/TBV, P/E, or FCF yield. Never make a price move the headline without the multiple it produced — "down 3%" only matters as "still just above tangible book".
-3. SHAPE: about three short paragraphs of two or three sentences each, 120-180 words total, ONE thought per paragraph, blank line between paragraphs. Never a single block.
+3. SHAPE: three short paragraphs, TWO sentences each (a third sentence only if the sentences are short) — aim for about 150 words, never more than 180. One thought per paragraph, blank line between them, never a single block. Before you finish, count the words in your body; if it runs over 170, cut a WHOLE sentence (a quiet name, an aside) and count again — do not shave words from every line.
 4. The SUBJECT says what the email is. Idea day → "TICKER: hook" (bare ticker, no exchange suffix). Review day → "Your book — hook". A ticker subject promises a fresh idea; never put one on a review.
 5. Do NOT write a greeting, sign-off, or reply invitation — the template adds all three. Start with your first real sentence.
 
@@ -82,9 +82,14 @@ export function coverNoteRegisterIssues(
 ): string[] {
   const issues: string[] = [];
   const words = body.split(/\s+/).filter(Boolean).length;
-  if (words > 185)
+  // John's target is 120-180; the writer is told to aim for ~150. But the
+  // model reliably overshoots and oscillates around 190, so a HARD reject at
+  // 185 sent well-formed 188-word notes to the boilerplate fallback ("My latest
+  // idea for you.") — strictly worse than shipping the good, slightly-long
+  // note. Reject only genuine bloat (>200); the prompt does the pull toward 150.
+  if (words > 200)
     issues.push(
-      `Body is ${words} words — ${words - 180} over the 180-word ceiling. Remove one WHOLE sentence (a quiet name, an aside); do not shave words from every sentence — that just flattens the prose.`,
+      `Body is ${words} words — well over John's 120-180. Cut to about 160 by removing WHOLE sentences (a quiet name, an aside); do not shave words from every sentence — that just flattens the prose.`,
     );
   if (words < 105) issues.push(`Body is ${words} words — too thin; aim for 120-180.`);
 
