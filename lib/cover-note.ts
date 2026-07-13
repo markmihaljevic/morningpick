@@ -54,6 +54,26 @@ export interface CoverNote {
   body: string;
 }
 
+/**
+ * The exact decimal figures in a string — the ones that belong in the PDF, not
+ * the email. A decimal passes (is NOT returned) only when it reads as speech: a
+ * multiple ("2.4x", "2.4 times") or a rounded magnitude ("£1.5bn", "10.5
+ * million"). Everything else is exact, whatever the notation: percents ("3.6%"),
+ * symbol prices ("€43.99"), pence ("512.6p"), code prices ("SEK 43.99"), worded
+ * ("43.99 euros"), bare ("closed at 43.99"). Shared by the gate (rule 1) and the
+ * fallback (so a one-liner reading "1.0x tangible book" survives, but "512.6p"
+ * does not).
+ */
+const SPOKEN_DECIMAL_SUFFIX = /^(x|times|k|m|bn|million|billion|trillion)$/i;
+export function exactDecimalFigures(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/\d+(?:,\d{3})*\.\d+\s?([a-z%]+)?/gi)) {
+    if (m[1] && SPOKEN_DECIMAL_SUFFIX.test(m[1])) continue;
+    out.push(m[0].trim());
+  }
+  return out;
+}
+
 /** Deterministic register checks (rules 1, 3, 4) — violations become repair notes. */
 export function coverNoteRegisterIssues(
   subject: string,
@@ -62,7 +82,10 @@ export function coverNoteRegisterIssues(
 ): string[] {
   const issues: string[] = [];
   const words = body.split(/\s+/).filter(Boolean).length;
-  if (words > 185) issues.push(`Body is ${words} words — the email allows 120-180. Cut a thought, don't compress the prose.`);
+  if (words > 185)
+    issues.push(
+      `Body is ${words} words — ${words - 180} over the 180-word ceiling. Remove one WHOLE sentence (a quiet name, an aside); do not shave words from every sentence — that just flattens the prose.`,
+    );
   if (words < 105) issues.push(`Body is ${words} words — too thin; aim for 120-180.`);
 
   const paragraphs = body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
@@ -71,17 +94,9 @@ export function coverNoteRegisterIssues(
   }
   if (paragraphs.length > 4) issues.push(`${paragraphs.length} paragraphs — collapse to about three.`);
 
-  // Rule 1: decimal precision belongs in the PDF. A decimal number passes only
-  // when it reads as speech — a multiple ("2.4x", "2.4 times") or a rounded
-  // magnitude ("£1.5bn", "10.5 million"). Everything else is an exact figure,
-  // whatever the notation: decimal percents ("3.6%"), symbol prices ("€43.99"),
-  // pence ("512.6p"), currency-code prices ("SEK 43.99"), worded ("43.99
-  // euros"), or bare ("closed at 43.99"). Suffix-based on purpose: matching
-  // known currency prefixes is how "SEK 43.99" once shipped.
-  const SPOKEN_DECIMAL_SUFFIX = /^(x|times|k|m|bn|million|billion|trillion)$/i;
-  for (const m of body.matchAll(/\d+(?:,\d{3})*\.\d+\s?([a-z%]+)?/gi)) {
-    if (m[1] && SPOKEN_DECIMAL_SUFFIX.test(m[1])) continue;
-    issues.push(`Exact figure "${m[0].trim()}" — round it the way a person speaks; the decimals live in the PDF.`);
+  // Rule 1: decimal precision belongs in the PDF (see exactDecimalFigures).
+  for (const m of exactDecimalFigures(body)) {
+    issues.push(`Exact figure "${m}" — round it the way a person speaks; the decimals live in the PDF.`);
   }
 
   // Rule 1: number budget. Count numeric tokens — prices ("£40", "510p"),
@@ -148,7 +163,9 @@ export async function writeCoverNote(args: {
 
   try {
     let repairNote = "";
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Four attempts: dense idea names (a bank with a dozen metrics) often need
+    // two compression passes to land inside 180 words (BARC went 213→197→…).
+    for (let attempt = 0; attempt < 4; attempt++) {
       const res = await anthropic().messages.create({
         model: cfg.MEMO_MODEL,
         max_tokens: 2000,
@@ -185,7 +202,7 @@ export async function writeCoverNote(args: {
         .map((i) => `- ${i}`)
         .join("\n")}\n\n`;
     }
-    return null; // three register failures — the fallback subject/body is safer
+    return null; // four register failures — the fallback subject/body is safer
   } catch (e) {
     console.error("Cover-note write failed (fail-open):", e);
     return null;
@@ -219,8 +236,12 @@ export function fallbackCoverBody(args: {
       "A read-through of the book this morning rather than a fresh idea — where each name stands and whether anything has changed since I wrote it up.";
     return attachLine ? `${lead}\n\n${attachLine}` : `${lead}\n\nNothing here changes my mind on the names you hold.`;
   }
-  const safeOneLiner =
-    args.oneLiner && !/\d+(?:,\d{3})*\.\d+/.test(args.oneLiner) ? args.oneLiner : "My latest idea for you.";
+  // The one-liner never went through the gate, so use it only when it carries
+  // no EXACT decimal figure — but a spoken multiple like "1.0x tangible book"
+  // is fine and must survive (a blunt \d+\.\d+ test wrongly nuked it to
+  // boilerplate, which is what happened to the BARC demo).
+  const oneLiner = args.oneLiner?.trim();
+  const safeOneLiner = oneLiner && exactDecimalFigures(oneLiner).length === 0 ? oneLiner : "My latest idea for you.";
   return attachLine ? `${safeOneLiner}\n\n${attachLine}` : safeOneLiner;
 }
 
