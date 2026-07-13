@@ -64,6 +64,11 @@ async function main() {
   // and the conviction gate so a preview always shows the whole idea+one-pager
   // experience, even for a high-bar profile that would otherwise book-review.
   const demoTicker = process.env.DEMO_TICKER?.trim();
+  // DEMO_SECOND_LOOK=THX.V forces a reconciliation second look (no-repeat
+  // rule 3): finds the subscriber's most recent prior note for that COMPANY
+  // (any listing, keyed by ISIN/name) and writes the "what changed + reconcile
+  // the earlier figures" note the gate produces when a company re-qualifies.
+  const demoSecondLook = process.env.DEMO_SECOND_LOOK?.trim();
   let decision =
     demoTicker
       ? { kind: "idea" as NoteKind, reason: `forced demo idea on ${demoTicker}` }
@@ -71,6 +76,26 @@ async function main() {
           ["second_look", "review"].includes(process.env.FORCE_KIND!)
         ? await fallbackNote({ coverageItems, reason: `forced ${process.env.FORCE_KIND} demo` })
         : await decideNote({ coverageItems, dailyPlan: true });
+
+  if (demoSecondLook) {
+    const { identityForTicker } = await import("../lib/company-key");
+    const id = await identityForTicker(demoSecondLook);
+    const { data: prior } = await db()
+      .from("memos")
+      .select("id, ticker, delivery_date")
+      .eq("subscriber_id", subscriber.id)
+      .eq("company_key", id.key)
+      .order("delivery_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!prior) throw new Error(`No prior note for ${demoSecondLook} (company key ${id.key}) to reconcile.`);
+    decision = {
+      kind: "second_look" as NoteKind,
+      ticker: demoSecondLook,
+      revisit: { memoId: prior.id as string, date: prior.delivery_date as string },
+      reason: `New reported results since the ${prior.delivery_date} note (sent as ${prior.ticker}). Open with what changed since that note, and reconcile every figure you quote from it onto today's consistent basis — if a prior figure was mis-based (e.g. a currency mix), correct it plainly.`,
+    } as typeof decision & { ticker: string; revisit: { memoId: string; date: string } };
+  }
   console.error(`Desk decision: ${decision.kind} — ${decision.reason}`);
 
   let ticker = "";
@@ -281,10 +306,15 @@ async function main() {
     fullNoteMarkdown: memo.markdown,
     ticker,
     meta: memo.meta,
+    isReview: memoKind === "review",
     attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
   });
   const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
-  const coverSubject = cover?.subject || `${bareTicker(ticker)}: ${hook || "today's idea"}`;
+  const coverSubject =
+    cover?.subject ||
+    (memoKind === "review"
+      ? `Your book — ${hook || "today's read-through"}`
+      : `${bareTicker(ticker)}: ${hook || "today's idea"}`);
   const coverBody =
     cover?.body ||
     `${memo.meta?.one_liner ?? "My latest idea for you."}${

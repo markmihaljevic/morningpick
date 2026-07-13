@@ -43,9 +43,13 @@ export function renderMemoEmail(args: MemoEmailArgs): string {
     ? `<p style="margin:0 0 14px;color:#5f6368;">(A quick word before we start — this is your first note, written before I really know you. Just reply and tell me how you invest, and every note from here adapts.)</p>`
     : "";
 
-  const signOff = `<p style="margin:22px 0 0;">— ${escapeHtml(args.signOffName)}</p>`;
+  // Rule 5 (July 13): the reply invitation closes EVERY morning email —
+  // hardcoded in the template so no rewrite can ever drop it again (it went
+  // missing from every send between July 7 and July 13; replies are the product).
+  const invitation = `<p style="margin:18px 0 0;">Reply to this email in plain language — preferences, questions, pushback. I read everything.</p>`;
+  const signOff = `<p style="margin:18px 0 0;">— ${escapeHtml(args.signOffName)}</p>`;
 
-  const letter = `${salutation}${firstNoteAside}${paragraphs}${signOff}`;
+  const letter = `${salutation}${firstNoteAside}${paragraphs}${invitation}${signOff}`;
 
   return emailLayout(letter, {
     unsubscribeToken: args.unsubscribeToken,

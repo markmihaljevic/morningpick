@@ -110,6 +110,7 @@ async function main() {
     fullNoteMarkdown: memo.markdown,
     ticker: target.ticker,
     meta: memo.meta,
+    isReview: false,
     attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
   });
   const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();

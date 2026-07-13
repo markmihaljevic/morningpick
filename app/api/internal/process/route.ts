@@ -570,10 +570,17 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       fullNoteMarkdown: memo.markdown,
       ticker,
       meta: memo.meta,
+      isReview: memoKind === "review",
       attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
     });
     const hook = h1Title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
-    const coverSubject = cover?.subject || `${bareTicker(ticker)}: ${hook || "today's idea"}`;
+    // Rule 4: the subject says what the email IS — reviews lead "Your book —";
+    // a ticker subject promises a fresh idea.
+    const coverSubject =
+      cover?.subject ||
+      (memoKind === "review"
+        ? `Your book — ${hook || "today's read-through"}`
+        : `${bareTicker(ticker)}: ${hook || "today's idea"}`);
     const coverBody =
       cover?.body ||
       `${memo.meta?.one_liner ?? "My latest idea for you."}${

@@ -6,6 +6,10 @@ import { fmpGet } from "./fmp";
 export interface CoverageItem {
   memoId: string;
   ticker: string;
+  /** Authoritative display name from the memo row — the writer must NEVER
+   * infer a company name from a ticker (CJ.TO was once prosed as "Cenovus";
+   * it is Cardinal Energy). */
+  companyName: string | null;
   date: string;
   title: string | null;
   kind: string;
@@ -53,7 +57,7 @@ export async function getCoverageContext(subscriberId: string): Promise<{
     .slice(0, 10);
   const { data: memos } = await db()
     .from("memos")
-    .select("id, ticker, delivery_date, title, kind, pitch_price, pitch_currency, call_status, extras")
+    .select("id, ticker, company_name, delivery_date, title, kind, pitch_price, pitch_currency, call_status, extras")
     .eq("subscriber_id", subscriberId)
     .not("sent_at", "is", null)
     .gte("delivery_date", since)
@@ -96,6 +100,7 @@ export async function getCoverageContext(subscriberId: string): Promise<{
     return {
       memoId: m.id,
       ticker: m.ticker,
+      companyName: (m as { company_name?: string | null }).company_name ?? null,
       date: m.delivery_date,
       title: m.title,
       kind: m.kind ?? "idea",
@@ -127,6 +132,7 @@ export async function getCoverageContext(subscriberId: string): Promise<{
 export function coverageForPrompt(items: CoverageItem[]): unknown[] {
   return items.slice(0, COVERAGE_PROMPT_ITEMS).map((i) => ({
     ticker: i.ticker,
+    company: i.companyName, // authoritative — never infer a name from a ticker
     date: i.date,
     kind: i.kind,
     call: i.oneLiner ?? i.title,
