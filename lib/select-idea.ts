@@ -134,7 +134,10 @@ const WATCHLIST_MAX_AGE_DAYS = 45;
  * shipping a name the analyst wouldn't put money behind.
  */
 
-const MAX_PREFLIGHT_ATTEMPTS = 4;
+// 6, not 4: with cross-day veto memory excluding recent rejects upstream, a
+// deeper walk reaches genuinely fresh candidates before giving up (observed:
+// 4 attempts re-litigating the same names shipped three fallback mornings).
+const MAX_PREFLIGHT_ATTEMPTS = 6;
 const MIN_CONVICTION = 6;
 const RANKED_FOR_PICK = 20;
 

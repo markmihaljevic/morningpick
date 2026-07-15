@@ -68,7 +68,16 @@ export async function verifyMemo(
   webSources: { url: string; title: string }[] = [],
   computedFigures: ComputedFigure[] = [],
   peerComps?: string,
+  opts?: { review?: boolean },
 ): Promise<VerificationResult> {
+  // Review-only discipline (John, July 14) rides in the USER message so the
+  // static system prompt stays prompt-cached.
+  const reviewRules = opts?.review
+    ? `<review_action_rules note="this memo is a book review — additional checks">
+- Flag as CRITICAL an "act" recommendation (add, size up, trim, exit) on a held name whose stated justification is ONLY a price move ("down 3%", "cheaper than my pitch", "gap widening/closing") with NO new dated development — results, filing, corporate event, or news. Price drift alone never re-promotes a held name to an action.
+- Flag as CRITICAL an action item or headline that repeats the PREVIOUS review's call (the book data carries prior review calls) without new information since.
+</review_action_rules>\n\n`
+    : "";
   try {
     const stream = anthropic().messages.stream({
       model: config().FEEDBACK_MODEL,
@@ -90,6 +99,7 @@ export async function verifyMemo(
             (webSources.length > 0
               ? `<web_sources note="search results the author consulted — you cannot see their contents">\n${webSources.map((s) => `- ${s.title} (${s.url})`).join("\n")}\n</web_sources>\n\n`
               : "") +
+            reviewRules +
             `<memo>\n${markdown}\n</memo>`,
         },
       ],

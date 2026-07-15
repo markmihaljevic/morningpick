@@ -14,7 +14,7 @@ import { db } from "../lib/db";
 import type { Profile } from "../lib/profile";
 import { type ScreenParams } from "../lib/screens";
 import { getCoverageContext, coverageForPrompt } from "../lib/coverage";
-import { decideNote, fallbackNote, type NoteKind } from "../lib/desk-editor";
+import { decideNote, noIdeaNote, type NoteKind, type DeskDecision } from "../lib/desk-editor";
 import { selectIdeaWithPreflight, updateWatchlist, hasReportedSince } from "../lib/select-idea";
 import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "../lib/fmp";
 import { generateVerifiedMemo } from "../lib/memo";
@@ -26,7 +26,7 @@ import { greetingName } from "../lib/greeting";
 import { buildTearSheet } from "../lib/tear-sheet";
 import { buildFullReport } from "../lib/full-report";
 import { buildCompTable } from "../lib/comp-table";
-import { writeCoverNote, fallbackCoverBody, bareTicker } from "../lib/cover-note";
+import { writeCoverNote, fallbackCoverBody, writeNoIdeaNote, fallbackNoIdeaBody, bareTicker } from "../lib/cover-note";
 import { normalizeCompanyName } from "../lib/company-key";
 import { config } from "../lib/config";
 import { sendEmail, replyAddress } from "../lib/resend";
@@ -73,9 +73,11 @@ async function main() {
     demoTicker
       ? { kind: "idea" as NoteKind, reason: `forced demo idea on ${demoTicker}` }
       : (process.env.FORCE_KIND as NoteKind | undefined) &&
-          ["second_look", "review"].includes(process.env.FORCE_KIND!)
-        ? await fallbackNote({ coverageItems, reason: `forced ${process.env.FORCE_KIND} demo` })
-        : await decideNote({ coverageItems, dailyPlan: true });
+          ["second_look", "review", "no_idea"].includes(process.env.FORCE_KIND!)
+        ? process.env.FORCE_KIND === "no_idea"
+          ? noIdeaNote({ reason: "forced no-idea demo — today's candidates failed pre-flight" })
+          : ({ kind: "review" as NoteKind, reason: `forced ${process.env.FORCE_KIND} demo — the scheduled read-through of the book` } as DeskDecision)
+        : await decideNote({ coverageItems, dailyPlan: true, date: new Date() });
 
   if (demoSecondLook) {
     const { identityForTicker } = await import("../lib/company-key");
@@ -98,6 +100,37 @@ async function main() {
   }
   console.error(`Desk decision: ${decision.kind} — ${decision.reason}`);
 
+  if (decision.kind === "no_idea") {
+    // Rule 3 demo: the idea slot, honestly empty. Canned rejections shaped
+    // like the walk's real ones (the production path passes real attempts).
+    const attempts = [
+      { ticker: "CGEO.L", expectedConviction: 3, reason: "A $1.3B Georgian holding company near 52-week highs — roughly triple the mandate's size ceiling, with no visible catalyst." },
+      { ticker: "ASA", expectedConviction: 3, reason: "A closed-end gold fund at a modest discount to NAV with no reason for the gap to close — structure, not mispricing." },
+      { ticker: "RTC.L", expectedConviction: 3, reason: "Illiquid micro-cap staffing name; a sharp drop with no data to explain a mispricing thesis." },
+    ];
+    const note =
+      (await writeNoIdeaNote({ attempts, reason: decision.reason })) ?? fallbackNoIdeaBody();
+    const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+    const html = renderMemoEmail({
+      coverNote: note.body,
+      greetingName: greetingName(subscriber.email, subscriber.first_name),
+      signOffName: config().ANALYST_NAME,
+      unsubscribeToken: subscriber.unsubscribe_token,
+      preparedFor: subscriber.email,
+      dateLine,
+    });
+    const id = await sendEmail({
+      to: subscriber.email,
+      subject: `[demo] ${note.subject}`,
+      html,
+      replyTo: replyAddress(`demo-${crypto.randomUUID()}`),
+      unsubscribeToken: subscriber.unsubscribe_token,
+    });
+    console.error(`No-idea note: ${note.body.split(/\s+/).length} words — subject "${note.subject}"`);
+    console.error(`Sent: ${id} → ${subscriber.email}`);
+    return;
+  }
+
   let ticker = "";
   let companyName: string | undefined;
   let selectionRationale = decision.reason;
@@ -111,7 +144,7 @@ async function main() {
     | { book: unknown[]; headlines: Record<string, { date: string; title: string; site: string }[]>; upcomingEarnings: Record<string, string> }
     | undefined;
   let data: TickerData | null = null;
-  let memoKind: NoteKind = decision.kind;
+  const memoKind: NoteKind = decision.kind;
 
   if (decision.kind === "idea" && demoTicker) {
     ticker = demoTicker;
@@ -165,15 +198,36 @@ async function main() {
       );
     }
     if (!idea.ok) {
+      // Rule 3 (mirrors the worker): no qualifying idea → say exactly that
+      // in the idea slot, from the walk's REAL rejections. Never a review.
       const failSummary = idea.attempts
         .map((a) => `${a.ticker} (${a.expectedConviction}/10: ${a.reason})`)
         .join("; ");
-      decision = await fallbackNote({
-        coverageItems,
-        reason: `today's candidates failed pre-flight: ${failSummary}`,
+      console.error(`No idea qualified — composing the no-idea note.`);
+      const note =
+        (await writeNoIdeaNote({
+          attempts: idea.attempts.map((a) => ({ ticker: a.ticker, expectedConviction: a.expectedConviction, reason: a.reason })),
+          reason: `today's candidates failed pre-flight: ${failSummary}`,
+        })) ?? fallbackNoIdeaBody();
+      const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+      const noIdeaHtml = renderMemoEmail({
+        coverNote: note.body,
+        greetingName: greetingName(subscriber.email, subscriber.first_name),
+        signOffName: config().ANALYST_NAME,
+        unsubscribeToken: subscriber.unsubscribe_token,
+        preparedFor: subscriber.email,
+        dateLine,
       });
-      memoKind = decision.kind;
-      console.error(`Fallback decision: ${decision.kind} — ${decision.reason}`);
+      const sentId = await sendEmail({
+        to: subscriber.email,
+        subject: `[demo] ${note.subject}`,
+        html: noIdeaHtml,
+        replyTo: replyAddress(`demo-${crypto.randomUUID()}`),
+        unsubscribeToken: subscriber.unsubscribe_token,
+      });
+      console.error(`No-idea note: ${note.body.split(/\s+/).length} words — subject "${note.subject}"`);
+      console.error(`Sent: ${sentId} → ${subscriber.email}`);
+      return;
     }
     await updateWatchlist({
       subscriberId: subscriber.id,

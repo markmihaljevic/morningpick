@@ -136,7 +136,11 @@ Updated falsifiers and dates.
     : "";
 
   const reviewBlock = args.review
-    ? `THIS IS A COVERAGE REVIEW — no new pick today. The desk judged today's fresh candidates too weak to pitch honestly, so instead: mark the book to market and earn the subscriber's trust with stewardship. Never apologize for this — a review of open calls IS the work.
+    ? `THIS IS A COVERAGE REVIEW — the SCHEDULED read-through of the book (a calendar fixture, not a fallback; nothing failed today). No new pick: mark the book to market and earn the subscriber's trust with stewardship. Never apologize for this — a review of open calls IS the work.
+
+ACTION DISCIPLINE (the fact-checker blocks violations):
+- A held name becomes the headline or the "act" item (add, size up, trim, exit) ONLY on new information: reported results, a filing, a corporate event, or dated news bearing on the thesis. A price move alone — however tempting the "cheaper than yesterday" arithmetic — is CONTEXT, never the action; the reader already owns the name, and drift does not re-promote it.
+- Your book data includes the previous reviews' calls. NEVER re-run yesterday's headline or action: if the most notable thing today is the same drift you flagged yesterday, it is no longer notable — pick the next most important thing, or say plainly the book is quiet. "Nothing to do today" is stewardship, not failure.
 
 <your_open_book note="your open calls with live prices and returns">
 ${JSON.stringify(args.review.book)}

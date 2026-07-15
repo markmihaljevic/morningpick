@@ -63,7 +63,9 @@ export async function getCoverageContext(subscriberId: string): Promise<{
     .gte("delivery_date", since)
     .order("delivery_date", { ascending: false });
 
-  const rows = memos ?? [];
+  // No-idea mornings are not coverage: nothing was pitched, there is nothing
+  // to mark to market or review. They exist only as the day's honest record.
+  const rows = (memos ?? []).filter((m) => m.kind !== "no_idea");
   if (rows.length === 0) return { items: [], taste: { liked: [], disliked: [] } };
 
   const { data: reactions } = await db()

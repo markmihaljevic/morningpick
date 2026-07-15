@@ -37,6 +37,14 @@ const envSchema = z.object({
   // A covered name moving this % since its last note triggers a follow-up.
   FOLLOWUP_MOVE_PCT: z.coerce.number().positive().default(15),
 
+  // THE EXPLICIT CALENDAR RULE (John, July 14): which UTC ISO weekdays
+  // (1=Monday … 7=Sunday, comma-separated) are "Your book" review days for
+  // DAILY subscribers; every other day is one new idea. The email type is
+  // decided from this rule BEFORE any writing step — feedback, examples, and
+  // register changes never touch it. Weekly (free) subscribers always get an
+  // idea: their single Monday email must not be a review of an empty book.
+  REVIEW_WEEKDAYS: z.string().default("1"),
+
   // Attach the one-page tear-sheet PDF to daily notes. Off before a domain
   // warm-up if attachments dent inbox placement at scale.
   ATTACH_TEARSHEET: z.enum(["true", "false"]).default("true"),

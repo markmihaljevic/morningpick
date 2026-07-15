@@ -18,14 +18,14 @@ import { buildTearSheet } from "@/lib/tear-sheet";
 import { buildFullReport } from "@/lib/full-report";
 import { buildCompTable } from "@/lib/comp-table";
 import { identityFromProfile, normalizeCompanyName } from "@/lib/company-key";
-import { writeCoverNote, fallbackCoverBody, bareTicker } from "@/lib/cover-note";
+import { writeCoverNote, fallbackCoverBody, writeNoIdeaNote, fallbackNoIdeaBody, bareTicker } from "@/lib/cover-note";
 import {
   getCoverageContext,
   coverageForPrompt,
   type CoverageItem,
   type TasteSignal,
 } from "@/lib/coverage";
-import { decideNote, fallbackNote, type NoteKind } from "@/lib/desk-editor";
+import { decideNote, noIdeaNote, type NoteKind } from "@/lib/desk-editor";
 import { selectIdeaWithPreflight, updateWatchlist, hasReportedSince } from "@/lib/select-idea";
 import { sendEmail, replyAddress } from "@/lib/resend";
 
@@ -67,6 +67,7 @@ interface SavedPlan {
   followupContext?: { originalMarkdown: string; originalDate: string; priceThen: number | null; priceNow: number | null; triggerDetail: string };
   secondLookContext?: { originalMarkdown: string; originalDate: string; development: string };
   reviewContext?: { book: unknown[]; headlines: Record<string, { date: string; title: string; site: string }[]>; upcomingEarnings: Record<string, string> };
+  noIdeaContext?: { attempts: { ticker: string; expectedConviction: number; reason: string }[] };
   referenceLinks: { label: string; url: string }[];
   researchLinks: { label: string; url: string }[];
   primarySources: { url: string; title: string; type: "interview" | "earnings_call" | "deep_dive" | "analysis"; note: string }[];
@@ -191,8 +192,14 @@ async function buildPlan(
       .slice(0, 2)
       .join(" · ") || undefined;
 
-  // The desk editor decides what kind of note this morning deserves.
-  let decision = await decideNote({ coverageItems, dailyPlan: isDailyPlan(subscriberPlanTier) });
+  // The desk editor decides what kind of note this morning deserves —
+  // calendar-first (John's rule 1), dated by the DELIVERY date so a retried
+  // morning keeps its kind across midnight.
+  let decision = await decideNote({
+    coverageItems,
+    dailyPlan: isDailyPlan(subscriberPlanTier),
+    date: new Date(`${delivery.delivery_date}T04:30:00Z`),
+  });
 
   let ticker = "";
   let companyName: string | undefined;
@@ -200,6 +207,7 @@ async function buildPlan(
   let followupContext: SavedPlan["followupContext"];
   let secondLookContext: SavedPlan["secondLookContext"];
   let reviewContext: SavedPlan["reviewContext"];
+  let noIdeaContext: SavedPlan["noIdeaContext"];
   let data: TickerData | null = null;
   let kindOverride: NoteKind | null = null;
 
@@ -218,6 +226,21 @@ async function buildPlan(
       if (!released) excluded.push(c.ticker);
     }
 
+    // Cross-day veto memory: names pre-flight rejected in the last 14 days
+    // are excluded up front, so the walk reaches FRESH candidates instead of
+    // re-litigating the same rejects every morning (observed: CGEO.L vetoed
+    // three mornings running while fallbacks shipped in the idea slot).
+    const { data: vetoEvents } = await db()
+      .from("events")
+      .select("payload")
+      .eq("type", "preflight_fallback")
+      .eq("subscriber_id", subscriberId)
+      .gte("created_at", new Date(Date.now() - 14 * 86_400_000).toISOString());
+    for (const ev of vetoEvents ?? []) {
+      const atts = (ev.payload as { attempts?: { ticker?: string }[] } | null)?.attempts ?? [];
+      for (const a of atts) if (a.ticker) excluded.push(a.ticker);
+    }
+
     // Identity-keyed sent history (no-repeat rule 1): every listing of a
     // sent company is consumed by one send — THX.L and THX.V are one idea.
     const { data: sentRows } = await db()
@@ -225,11 +248,13 @@ async function buildPlan(
       .select("id, ticker, company_key, company_name, delivery_date")
       .eq("subscriber_id", subscriberId)
       .neq("ticker", "REVIEW")
+      .neq("ticker", "NO_IDEA") // sentinel rows must not eat the 400-row window
       .gte("delivery_date", new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10))
       .order("delivery_date", { ascending: false })
       .limit(400); // must cover the full window for DAILY subscribers (~285 sends/400d)
     const sentCompanies = (sentRows ?? [])
-      .filter((r) => r.company_key && r.company_key !== "kind:review")
+      // "kind:*" keys are day-type sentinels (review, no_idea), never companies.
+      .filter((r) => r.company_key && !(r.company_key as string).startsWith("kind:"))
       .map((r) => ({
         key: r.company_key as string,
         nameKey: r.company_name ? `name:${normalizeCompanyName(r.company_name as string)}` : null,
@@ -251,18 +276,18 @@ async function buildPlan(
     });
 
     if (!idea.ok) {
-      // Both candidates failed pre-flight — steward the book instead.
+      // Rule 3 (John, July 14): no qualifying idea on an idea day → say
+      // exactly that in the idea slot and explain why. NEVER substitute a
+      // review silently (that shipped three consecutive reviews, July 13-15).
       const failSummary = idea.attempts
         .map((a) => `${a.ticker} (${a.expectedConviction}/10: ${a.reason})`)
         .join("; ");
-      decision = await fallbackNote({
-        coverageItems,
-        reason: `today's candidates failed pre-flight: ${failSummary}`,
-      });
+      decision = noIdeaNote({ reason: `today's candidates failed pre-flight: ${failSummary}` });
       await logEvent("preflight_fallback", {
         subscriberId,
         payload: { attempts: idea.attempts, fellBackTo: decision.kind },
       });
+      noIdeaContext = { attempts: idea.attempts };
     }
 
     await updateWatchlist({
@@ -335,6 +360,11 @@ async function buildPlan(
       originalDate: decision.revisit.date,
       development: decision.reason,
     };
+  } else if (decision.kind === "no_idea") {
+    // The idea slot, honestly empty: a sentinel row (like REVIEW) so the day
+    // has its record; no dataset, no attachments, no company identity.
+    ticker = "NO_IDEA";
+    selectionRationale = decision.reason;
   } else if (decision.kind === "review") {
     ticker = "REVIEW";
     selectionRationale = decision.reason;
@@ -351,15 +381,15 @@ async function buildPlan(
   if (!ticker) {
     throw new Error(`Desk decision '${decision.kind}' resolved no ticker — aborting delivery.`);
   }
-  if (!data && decision.kind !== "review") data = await fetchTickerData(ticker);
+  const tickerless = decision.kind === "review" || decision.kind === "no_idea";
+  if (!data && !tickerless) data = await fetchTickerData(ticker);
   const companyProfile = (data && (Array.isArray(data.profile) ? data.profile[0] : data.profile)) as
     | { website?: string; cik?: string; currency?: string; exchangeShortName?: string }
     | undefined;
   // Deterministic registry links (IR page, filings) for inline citing. The
   // shared research brief already surfaces the primary sources that matter,
   // so we no longer run a separate (expensive) discovery pass per subscriber.
-  const researchLinks =
-    decision.kind === "review" ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
+  const researchLinks = tickerless ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
 
   return {
     kind: kindOverride ?? decision.kind,
@@ -369,6 +399,7 @@ async function buildPlan(
     followupContext,
     secondLookContext,
     reviewContext,
+    noIdeaContext,
     referenceLinks: researchLinks,
     researchLinks,
     primarySources: [],
@@ -453,6 +484,80 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     // Hydrate generation inputs from the plan.
     ticker = plan.ticker;
     const memoKind = plan.kind;
+
+    if (memoKind === "no_idea") {
+      // Rule 3 (John, July 14): the idea slot, honestly empty — a short
+      // register-gated email saying exactly that and why. No memo pipeline,
+      // no attachments. Composed, inserted, and sent here; keep the send
+      // tail in sync with the shared one at the bottom of this function.
+      const note =
+        (await writeNoIdeaNote({
+          attempts: plan.noIdeaContext?.attempts ?? [],
+          reason: plan.selectionRationale,
+        })) ?? fallbackNoIdeaBody();
+      const dateLine = new Date(delivery.delivery_date + "T00:00:00Z").toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "UTC",
+      });
+      title = note.subject;
+      memoId = crypto.randomUUID();
+      html = renderMemoEmail({
+        coverNote: note.body,
+        greetingName: greetingName(subscriber.email, subscriber.first_name),
+        signOffName: config().ANALYST_NAME,
+        firstNote: plan.firstNote,
+        unsubscribeToken: subscriber.unsubscribe_token,
+        billingUrl:
+          subscriber.plan === "paid"
+            ? `${config().APP_URL}/api/billing/${subscriber.portal_token}`
+            : undefined,
+        profileUrl: `${config().APP_URL}/profile/${subscriber.portal_token}`,
+        upgradeUrl: isDailyPlan(subscriber.plan)
+          ? undefined
+          : `${config().APP_URL}/api/upgrade/${subscriber.portal_token}`,
+        preparedFor: subscriber.email,
+        dateLine,
+      });
+      const { error: noIdeaError } = await db().from("memos").insert({
+        id: memoId,
+        subscriber_id: subscriber.id,
+        delivery_date: delivery.delivery_date,
+        ticker: "NO_IDEA",
+        company_key: "kind:no_idea", // sentinel — never a company identity
+        company_name: null,
+        title,
+        content_md: `# ${note.subject}\n\n${note.body}\n\n## Why nothing qualified (internal record)\n\n${(plan.noIdeaContext?.attempts ?? [])
+          .map((a) => `- ${a.ticker} (${a.expectedConviction}/10): ${a.reason}`)
+          .join("\n")}`,
+        content_html: html,
+        model: config().MEMO_MODEL,
+        reply_address: replyAddress(memoId),
+        kind: "no_idea",
+        pitch_price: null,
+        pitch_currency: null,
+        extras: { attempts: plan.noIdeaContext?.attempts ?? [], dateLine },
+      });
+      if (noIdeaError) throw new Error(`Memo insert failed: ${noIdeaError.message}`);
+
+      const noIdeaResendId = await sendEmail({
+        to: subscriber.email,
+        subject: title,
+        html,
+        replyTo: replyAddress(memoId),
+        unsubscribeToken: subscriber.unsubscribe_token,
+      });
+      await db()
+        .from("memos")
+        .update({ resend_message_id: noIdeaResendId, sent_at: new Date().toISOString() })
+        .eq("id", memoId);
+      await logEvent("memo_sent", {
+        subscriberId: subscriber.id,
+        payload: { memoId, ticker: "NO_IDEA", resendId: noIdeaResendId },
+      });
+      return;
+    }
     const companyName = plan.companyName;
     const selectionRationale = plan.selectionRationale;
     const followupContext = plan.followupContext;

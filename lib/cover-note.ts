@@ -126,8 +126,14 @@ export function coverNoteRegisterIssues(
     issues.push(`${numericCount} numeric tokens — someone writing from memory uses a handful (2-3 for the actionable name, at most 1 each elsewhere).`);
   }
 
+  // Rule 4, both directions: "Your book" prefix ONLY on review days,
+  // ticker-led subjects ONLY on idea days — the subject is the visible check
+  // that the calendar decision held.
   if (isReview && !/^your book\b/i.test(subject.trim())) {
     issues.push(`Review-day subject must lead with "Your book — " (got "${subject.slice(0, 50)}"). A ticker subject promises a fresh idea.`);
+  }
+  if (!isReview && /^your book\b/i.test(subject.trim())) {
+    issues.push(`"Your book" leads REVIEW subjects only — this is an idea-slot email; lead with the ticker.`);
   }
 
   // Rule 5: template adds the invitation — the body must not duplicate it.
@@ -248,6 +254,116 @@ export function fallbackCoverBody(args: {
   const oneLiner = args.oneLiner?.trim();
   const safeOneLiner = oneLiner && exactDecimalFigures(oneLiner).length === 0 ? oneLiner : "My latest idea for you.";
   return attachLine ? `${safeOneLiner}\n\n${attachLine}` : safeOneLiner;
+}
+
+/** One pre-flight rejection, as logged by the walk — input to the no-idea note. */
+export interface NoIdeaAttempt {
+  ticker: string;
+  expectedConviction: number;
+  reason: string;
+}
+
+const NO_IDEA_SYSTEM = `You are an investment analyst writing the short morning email to a client on a day when NOTHING cleared your bar. Rule (from the client's own spec): "If no qualifying idea survives the pipeline on an idea day, say exactly that in the idea slot and explain why." Honest failure, told plainly, the way a person speaks — never apologetic, never padded.
+
+REGISTER RULES (checked in code):
+1. The SUBJECT must begin exactly "No new idea this morning" — optionally followed by " — " and a short honest hook ("No new idea this morning — everything cheap had a reason").
+2. Two or three short paragraphs, 60-180 words, blank line between paragraphs. Say what you looked at and why each fell short, in plain rounded words — "a Georgian bank ten times too big for your mandate", "a fund at a small discount with no reason for it to close". NEVER exact figures: no decimals, no precise percents; at most a handful of rounded numbers.
+3. Never name more than three or four candidates; group the rest ("a couple of illiquid micro-caps").
+4. Do NOT write a greeting, sign-off, or reply invitation — the template adds them. No markdown. Do not mention attachments (there are none), internal tools, screens, "pipelines", "pre-flight", or conviction scores — translate mechanics into an analyst's plain judgment.
+5. Close the last paragraph forward-looking in ONE sentence: what would change your mind or where you're looking next.`;
+
+const NO_IDEA_SCHEMA = {
+  type: "object",
+  properties: {
+    subject: { type: "string", description: 'Must begin "No new idea this morning".' },
+    body: { type: "string", description: "2-3 short paragraphs, 60-180 words, blank-line separated." },
+  },
+  required: ["subject", "body"],
+  additionalProperties: false,
+} as const;
+
+/** Deterministic register checks for the no-idea note (John's rule 3 + rule 4). */
+export function noIdeaRegisterIssues(subject: string, body: string): string[] {
+  const issues: string[] = [];
+  if (!/^no new idea this morning\b/i.test(subject.trim())) {
+    issues.push(`Subject must begin "No new idea this morning" (got "${subject.slice(0, 50)}").`);
+  }
+  // Rule 4: no ticker-led subject (that promises an idea), no "Your book".
+  if (/^your book\b/i.test(subject.trim())) issues.push('"Your book" leads review subjects only.');
+  const words = body.split(/\s+/).filter(Boolean).length;
+  if (words > 185) issues.push(`Body is ${words} words — this note allows 60-180. Cut a candidate, not the plainness.`);
+  if (words < 50) issues.push(`Body is ${words} words — too thin to count as "explain why"; aim for 60-180.`);
+  const paragraphs = body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  if (paragraphs.length < 2) issues.push("Single-block email — two or three short paragraphs, blank line between.");
+  if (paragraphs.length > 4) issues.push(`${paragraphs.length} paragraphs — collapse to two or three.`);
+  for (const m of exactDecimalFigures(body)) {
+    issues.push(`Exact figure "${m}" — round it the way a person speaks.`);
+  }
+  if (/i read everything|reply to this email/i.test(body)) {
+    issues.push("Do not write the reply invitation — the template adds it.");
+  }
+  // "screens" is analyst speech ("my screens run again tomorrow") — allowed;
+  // the machinery words below are not.
+  if (/pre-?flight|pipeline|conviction gate|screener|factor (score|table)/i.test(body)) {
+    issues.push("Internal plumbing on the page — translate mechanics into plain analyst judgment.");
+  }
+  return issues;
+}
+
+/**
+ * Write the no-idea morning email from the walk's actual rejections (rule 3:
+ * never substitute a review silently). Register-gated with a repair loop.
+ * Fail-open: null → the caller uses the static fallback.
+ */
+export async function writeNoIdeaNote(args: {
+  attempts: NoIdeaAttempt[];
+  reason: string;
+}): Promise<CoverNote | null> {
+  const cfg = config();
+  try {
+    let repairNote = "";
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const res = await anthropic().messages.create({
+        model: cfg.MEMO_MODEL,
+        max_tokens: 1500,
+        thinking: { type: "disabled" },
+        output_config: { format: { type: "json_schema", schema: NO_IDEA_SCHEMA }, effort: "medium" },
+        system: NO_IDEA_SYSTEM,
+        messages: [
+          {
+            role: "user",
+            content: `Why the desk sent nothing today: ${args.reason}\n\n<rejected_candidates>\n${JSON.stringify(args.attempts)}\n</rejected_candidates>\n\n${repairNote}Write the morning email (subject + body).`,
+          },
+        ],
+      });
+      if (res.stop_reason === "refusal") return null;
+      const text = res.content.find((b) => b.type === "text");
+      const parsed = JSON.parse(text && "text" in text ? text.text : "{}") as Partial<CoverNote>;
+      const subject = (parsed.subject ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+      const body = (parsed.body ?? "").trim();
+      if (!subject || body.length < 100) return null;
+
+      const issues = noIdeaRegisterIssues(subject, body);
+      if (issues.length === 0) return { subject, body };
+      console.warn(`No-idea note register issues (attempt ${attempt + 1}):`, issues);
+      repairNote = `IMPORTANT — your previous draft broke the register. Fix every item:\n${issues
+        .map((i) => `- ${i}`)
+        .join("\n")}\n\n`;
+    }
+    return null;
+  } catch (e) {
+    console.error("No-idea note write failed (fail-open):", e);
+    return null;
+  }
+}
+
+/** Static register-safe fallback when even the no-idea writer fails. */
+export function fallbackNoIdeaBody(): { subject: string; body: string } {
+  return {
+    subject: "No new idea this morning",
+    body:
+      "Nothing cleared the bar today. A handful of names looked cheap on the numbers, but each had a reason — too big for the mandate, too illiquid, or cheap without a catalyst — and I won't pitch a name I wouldn't put money behind.\n\nThe screens run again tomorrow morning, and a quiet day is part of the discipline: the ideas are only worth your time because the weak ones never reach you.",
+  };
 }
 
 /** The ticker without its exchange suffix — "BARC.L" → "BARC" — for subjects. */

@@ -402,7 +402,7 @@ export async function generateVerifiedMemo(args: {
   let memo = await generateMemo(args);
   // The attribution check should recognize brief-sourced claims as sourced.
   const verifySources = args.researchBrief ? args.researchBrief.sources : memo.sources;
-  let verification = await verifyMemo(memo.markdown, args.data, verifySources, figures, args.peerComps);
+  let verification = await verifyMemo(memo.markdown, args.data, verifySources, figures, args.peerComps, { review: Boolean(args.review) });
   const priorIssues: { claim: string; problem: string }[] = [];
   for (let regen = 0; !verification.passed && regen < MAX_REGENS; regen++) {
     priorIssues.push(...verification.critical_issues);
@@ -419,7 +419,7 @@ export async function generateVerifiedMemo(args: {
           .map((i) => `- "${i.claim}": ${i.problem}`)
           .join("\n")}`,
     });
-    verification = await verifyMemo(memo.markdown, args.data, verifySources, figures, args.peerComps);
+    verification = await verifyMemo(memo.markdown, args.data, verifySources, figures, args.peerComps, { review: Boolean(args.review) });
   }
   if (!verification.passed) {
     throw new Error(
