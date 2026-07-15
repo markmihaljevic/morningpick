@@ -56,10 +56,10 @@ const VERIFY_SYSTEM = `You are a fact-checker for an investment memo before it i
 - NAME-TICKER PAIRING: flag as CRITICAL a company name paired with a ticker that contradicts the name the dataset/book gives for that ticker (e.g. calling the CJ.TO position "Cenovus" when the book says Cardinal Energy) — wrong-company prose poisons the whole note.
 - OUT OF SCOPE — never flag: claims about news and events (deals, announcements, bids, deadlines, corporate actions, people). The author had live web-search results that you CANNOT see; <web_sources> lists what they consulted. Absence from the dataset is NOT evidence a news claim is wrong. Only flag an event claim if it DIRECTLY CONTRADICTS the dataset.
 - OUT OF SCOPE: figures attributed to a cited web source (a domain in parentheses).
-- ATTRIBUTION CHECK (the one exception to numbers-only): specific EVENT claims — deal terms, consideration structures, deadlines, named dates, scheme conditions — must carry attribution: an inline markdown link, a source domain in parentheses, or a clear match to a <web_sources> title. Paragraph-level attribution covers that paragraph's claims. Flag as CRITICAL an event claim with specific numbers/dates/terms that has NO attribution anywhere near it AND no basis in the dataset — not because it is false (you cannot know), but because unattributed event specifics are the memo's highest hallucination risk. General market color needs no attribution.
+- ATTRIBUTION CHECK (an exception to numbers-only): specific EVENT claims — deal terms, consideration structures, deadlines, named dates, scheme conditions — must carry attribution: an inline markdown link, a source domain in parentheses, or a clear match to a <web_sources> title. Paragraph-level attribution covers that paragraph's claims. Flag as CRITICAL an event claim with specific numbers/dates/terms that has NO attribution anywhere near it AND no basis in the dataset — not because it is false (you cannot know), but because unattributed event specifics are the memo's highest hallucination risk. General market color needs no attribution.
 - Flag as CRITICAL: dataset-attributed figures that contradict the dataset, invented figures presented as dataset facts, magnitude errors, wrong currency/units.
 - Flag as MINOR: rounding beyond ~2%, vague attribution.
-- REVIEW ACTION DISCIPLINE (the second exception to numbers-only): when the user message contains a <review_action_rules> block, this memo is a book review and that block's checks ARE in scope — apply them exactly as written and report violations as CRITICAL issues. This is the desk's standing discipline for reviews, not a style opinion.
+- REVIEW ACTION DISCIPLINE (a further exception to numbers-only): when the user message contains a <review_action_rules> block, this memo is a book review and that block's checks ARE in scope — apply them exactly as written and report violations as CRITICAL issues. This is the desk's standing discipline for reviews, not a style opinion.
 Do not otherwise comment on investment logic, style, or opinions — numbers against the dataset, plus the attribution check and any <review_action_rules> block above.`;
 
 /** Audit a memo's figures against the grounding dataset. Fail-open on errors. */
@@ -69,14 +69,19 @@ export async function verifyMemo(
   webSources: { url: string; title: string }[] = [],
   computedFigures: ComputedFigure[] = [],
   peerComps?: string,
-  opts?: { review?: boolean },
+  opts?: { review?: boolean; priorReviews?: { date: string; headline: string; action: string }[] },
 ): Promise<VerificationResult> {
   // Review-only discipline (John, July 14) rides in the USER message so the
   // static system prompt stays prompt-cached.
+  const priorReviewLines = (opts?.priorReviews ?? [])
+    .map((r) => `  - ${r.date}: headline "${r.headline}"; acted on: ${r.action || "(nothing specific)"}`)
+    .join("\n");
   const reviewRules = opts?.review
-    ? `<review_action_rules note="this memo is a book review — additional checks">
+    ? `<review_action_rules note="this memo is a book review — IN-SCOPE checks per the system prompt's review-discipline exception">
 - Flag as CRITICAL an "act" recommendation (add, size up, trim, exit) on a held name whose stated justification is ONLY a price move ("down 3%", "cheaper than my pitch", "gap widening/closing") with NO new dated development — results, filing, corporate event, or news. Price drift alone never re-promotes a held name to an action.
-- Flag as CRITICAL an action item or headline that repeats the PREVIOUS review's call (the book data carries prior review calls) without new information since.
+- Flag as CRITICAL a headline OR an "act on" item that repeats one of the PRIOR REVIEWS below without new dated information since that review.${
+        priorReviewLines ? `\n<prior_reviews>\n${priorReviewLines}\n</prior_reviews>` : " (no prior reviews on file yet.)"
+      }
 </review_action_rules>\n\n`
     : "";
   try {

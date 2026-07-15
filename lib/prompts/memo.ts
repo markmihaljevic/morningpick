@@ -49,6 +49,9 @@ export interface ReviewContext {
   book: unknown[]; // open calls with live returns (coverageForPrompt shape)
   headlines: Record<string, { date: string; title: string; site: string }[]>;
   upcomingEarnings: Record<string, string>;
+  /** The recent reviews' headline + "act on" item, so this one repeats
+   * neither without new information (John's July 14 P.S.). */
+  priorReviews?: { date: string; headline: string; action: string }[];
 }
 
 export function buildMemoUserPrompt(args: {
@@ -140,8 +143,14 @@ Updated falsifiers and dates.
 
 ACTION DISCIPLINE (the fact-checker blocks violations):
 - A held name becomes the headline or the "act" item (add, size up, trim, exit) ONLY on new information: reported results, a filing, a corporate event, or dated news bearing on the thesis. A price move alone — however tempting the "cheaper than yesterday" arithmetic — is CONTEXT, never the action; the reader already owns the name, and drift does not re-promote it.
-- Your book data includes the previous reviews' calls. NEVER re-run yesterday's headline or action: if the most notable thing today is the same drift you flagged yesterday, it is no longer notable — pick the next most important thing, or say plainly the book is quiet. "Nothing to do today" is stewardship, not failure.
-
+- Your recent reviews are listed below (<recent_reviews>). NEVER re-run a prior review's headline OR its "act on" item: if the most notable thing today is the same drift you already flagged, it is no longer notable — pick the next most important thing, or say plainly the book is quiet. "Nothing to do today" is stewardship, not failure.
+${
+  args.review.priorReviews && args.review.priorReviews.length > 0
+    ? `\n<recent_reviews note="your last reviews — do not repeat either the headline or the act-on item without NEW dated information since">\n${args.review.priorReviews
+        .map((r) => `- ${r.date}: headline "${r.headline}"; you said to act on: ${r.action || "(nothing specific)"}`)
+        .join("\n")}\n</recent_reviews>\n`
+    : ""
+}
 <your_open_book note="your open calls with live prices and returns">
 ${JSON.stringify(args.review.book)}
 </your_open_book>

@@ -130,6 +130,24 @@ export async function getCoverageContext(subscriberId: string): Promise<{
   return { items, taste };
 }
 
+/**
+ * Pull the headline and the "What I'd act on" item out of a review's markdown
+ * so the NEXT review can avoid repeating either (John's July 14 P.S.). The
+ * book strip only records prices/status, and a review's persisted call is its
+ * headline — the buried act item is not otherwise recoverable.
+ */
+export function extractReviewGist(markdown: string): { headline: string; action: string } {
+  const headline = (markdown.match(/^#\s+(.+)$/m)?.[1] ?? "")
+    .replace(/^your book\s*[—–-]\s*/i, "")
+    .trim();
+  const actionSection =
+    markdown.match(/^##\s*What I['’]d act on\s*$([\s\S]*?)(?=^##\s|^#\s|\Z)/im)?.[1] ??
+    markdown.match(/^##\s*What I['’]d act on\s*\n([\s\S]*?)(?:\n##\s|\n#\s|$)/im)?.[1] ??
+    "";
+  const action = actionSection.replace(/\s+/g, " ").trim().slice(0, 300);
+  return { headline, action };
+}
+
 /** Compact coverage summary for prompts. */
 export function coverageForPrompt(items: CoverageItem[]): unknown[] {
   return items.slice(0, COVERAGE_PROMPT_ITEMS).map((i) => ({

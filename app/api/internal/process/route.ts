@@ -22,6 +22,7 @@ import { writeCoverNote, fallbackCoverBody, writeNoIdeaNote, fallbackNoIdeaBody,
 import {
   getCoverageContext,
   coverageForPrompt,
+  extractReviewGist,
   type CoverageItem,
   type TasteSignal,
 } from "@/lib/coverage";
@@ -66,7 +67,7 @@ interface SavedPlan {
   selectionRationale: string;
   followupContext?: { originalMarkdown: string; originalDate: string; priceThen: number | null; priceNow: number | null; triggerDetail: string };
   secondLookContext?: { originalMarkdown: string; originalDate: string; development: string };
-  reviewContext?: { book: unknown[]; headlines: Record<string, { date: string; title: string; site: string }[]>; upcomingEarnings: Record<string, string> };
+  reviewContext?: { book: unknown[]; headlines: Record<string, { date: string; title: string; site: string }[]>; upcomingEarnings: Record<string, string>; priorReviews?: { date: string; headline: string; action: string }[] };
   noIdeaContext?: { attempts: { ticker: string; expectedConviction: number; reason: string }[] };
   referenceLinks: { label: string; url: string }[];
   researchLinks: { label: string; url: string }[];
@@ -383,13 +384,32 @@ async function buildPlan(
     ticker = "REVIEW";
     selectionRationale = decision.reason;
     const bookTickers = [...new Set(coverageItems.map((c) => c.ticker))].filter(
-      (t) => t !== "REVIEW",
+      (t) => t !== "REVIEW" && t !== "NO_IDEA",
     );
-    const [bookHeadlines, bookEarnings] = await Promise.all([
+    const [bookHeadlines, bookEarnings, priorReviewRows] = await Promise.all([
       fetchHeadlines(bookTickers),
       fetchUpcomingEarnings(bookTickers, 30),
+      // The last two reviews' headline + act-item, so this one repeats neither
+      // without new information (John's July 14 P.S.).
+      db()
+        .from("memos")
+        .select("delivery_date, content_md")
+        .eq("subscriber_id", subscriberId)
+        .eq("kind", "review")
+        .not("sent_at", "is", null)
+        .order("delivery_date", { ascending: false })
+        .limit(2),
     ]);
-    reviewContext = { book: coverage, headlines: bookHeadlines, upcomingEarnings: bookEarnings };
+    const priorReviews = (priorReviewRows.data ?? []).map((r) => ({
+      date: r.delivery_date as string,
+      ...extractReviewGist((r.content_md as string) ?? ""),
+    }));
+    reviewContext = {
+      book: coverage,
+      headlines: bookHeadlines,
+      upcomingEarnings: bookEarnings,
+      priorReviews,
+    };
   }
 
   if (!ticker) {

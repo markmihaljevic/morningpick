@@ -102,7 +102,14 @@ interface QualityPayload {
 
 /** Quality pulse: drift shows up here before subscribers feel it. */
 function qualityLines(events: { payload: unknown }[], preflightFallbacks: number): string[] {
-  if (events.length === 0) return [];
+  // A fully-vetoed morning ships only no_idea notes, which emit no
+  // memo_quality event — but that is exactly when the desk most needs to see
+  // the signal, so surface the fallback count even with zero quality events.
+  if (events.length === 0) {
+    return preflightFallbacks > 0
+      ? [`Quality pulse:`, `  no idea qualified — ${preflightFallbacks} pre-flight fallback${preflightFallbacks > 1 ? "s" : ""} (no idea/review notes shipped)`, ``]
+      : [];
+  }
   const q = events.map((e) => (e.payload ?? {}) as QualityPayload);
   const kinds: Record<string, number> = {};
   for (const p of q) kinds[p.kind ?? "?"] = (kinds[p.kind ?? "?"] ?? 0) + 1;
