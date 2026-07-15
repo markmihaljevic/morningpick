@@ -230,15 +230,29 @@ async function buildPlan(
     // are excluded up front, so the walk reaches FRESH candidates instead of
     // re-litigating the same rejects every morning (observed: CGEO.L vetoed
     // three mornings running while fallbacks shipped in the idea slot).
+    // RELEASE-AWARE, like the coverage exclusion above: a results release
+    // after the veto re-admits the name — yesterday's "no catalyst yet" is
+    // exactly the judgment new results can overturn, and a merely-vetoed
+    // name must never be harder to pitch than an already-sent one.
     const { data: vetoEvents } = await db()
       .from("events")
-      .select("payload")
+      .select("payload, created_at")
       .eq("type", "preflight_fallback")
       .eq("subscriber_id", subscriberId)
       .gte("created_at", new Date(Date.now() - 14 * 86_400_000).toISOString());
+    const lastVeto = new Map<string, string>(); // ticker → latest veto date
     for (const ev of vetoEvents ?? []) {
       const atts = (ev.payload as { attempts?: { ticker?: string }[] } | null)?.attempts ?? [];
-      for (const a of atts) if (a.ticker) excluded.push(a.ticker);
+      const day = String(ev.created_at).slice(0, 10);
+      for (const a of atts) {
+        if (!a.ticker) continue;
+        const prev = lastVeto.get(a.ticker);
+        if (!prev || day > prev) lastVeto.set(a.ticker, day);
+      }
+    }
+    for (const [vetoedTicker, vetoDate] of lastVeto) {
+      const released = await hasReportedSince(vetoedTicker, vetoDate);
+      if (!released) excluded.push(vetoedTicker);
     }
 
     // Identity-keyed sent history (no-repeat rule 1): every listing of a

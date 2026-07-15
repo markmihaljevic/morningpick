@@ -168,11 +168,13 @@ async function main() {
       .select("id, ticker, company_key, company_name, delivery_date")
       .eq("subscriber_id", subscriber.id)
       .neq("ticker", "REVIEW")
+      .neq("ticker", "NO_IDEA") // sentinel rows must not eat the 400-row window
       .gte("delivery_date", new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10))
       .order("delivery_date", { ascending: false })
       .limit(400); // must cover the full window for DAILY subscribers (~285 sends/400d)
     const sentCompanies = (sentRows ?? [])
-      .filter((r) => r.company_key && r.company_key !== "kind:review")
+      // "kind:*" keys are day-type sentinels (review, no_idea), never companies.
+      .filter((r) => r.company_key && !(r.company_key as string).startsWith("kind:"))
       .map((r) => ({
         key: r.company_key as string,
         nameKey: r.company_name ? `name:${normalizeCompanyName(r.company_name as string)}` : null,

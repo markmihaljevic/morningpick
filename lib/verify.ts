@@ -16,7 +16,7 @@ const VERIFY_SCHEMA = {
     critical_issues: {
       type: "array",
       description:
-        "Fabricated or materially wrong figures: numbers that contradict the dataset, invented data attributed to the dataset, or wrong-by-magnitude claims",
+        "Fabricated or materially wrong figures: numbers that contradict the dataset, invented data attributed to the dataset, or wrong-by-magnitude claims — plus violations of any in-scope rule block the user message provides (e.g. <review_action_rules>)",
       items: {
         type: "object",
         properties: {
@@ -59,7 +59,8 @@ const VERIFY_SYSTEM = `You are a fact-checker for an investment memo before it i
 - ATTRIBUTION CHECK (the one exception to numbers-only): specific EVENT claims — deal terms, consideration structures, deadlines, named dates, scheme conditions — must carry attribution: an inline markdown link, a source domain in parentheses, or a clear match to a <web_sources> title. Paragraph-level attribution covers that paragraph's claims. Flag as CRITICAL an event claim with specific numbers/dates/terms that has NO attribution anywhere near it AND no basis in the dataset — not because it is false (you cannot know), but because unattributed event specifics are the memo's highest hallucination risk. General market color needs no attribution.
 - Flag as CRITICAL: dataset-attributed figures that contradict the dataset, invented figures presented as dataset facts, magnitude errors, wrong currency/units.
 - Flag as MINOR: rounding beyond ~2%, vague attribution.
-Do not comment on investment logic, style, or opinions — numbers against the dataset, plus the attribution check above.`;
+- REVIEW ACTION DISCIPLINE (the second exception to numbers-only): when the user message contains a <review_action_rules> block, this memo is a book review and that block's checks ARE in scope — apply them exactly as written and report violations as CRITICAL issues. This is the desk's standing discipline for reviews, not a style opinion.
+Do not otherwise comment on investment logic, style, or opinions — numbers against the dataset, plus the attribution check and any <review_action_rules> block above.`;
 
 /** Audit a memo's figures against the grounding dataset. Fail-open on errors. */
 export async function verifyMemo(
