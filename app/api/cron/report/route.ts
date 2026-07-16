@@ -43,10 +43,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       .eq("type", "verify_failopen")
       .gte("created_at", dayStart),
     db().from("events").select("payload").eq("type", "memo_quality").gte("created_at", dayStart),
+    // empty_funnel (July 16) superseded preflight_fallback — count both so
+    // the digest stays honest across the transition.
     db()
       .from("events")
       .select("id", { count: "exact", head: true })
-      .eq("type", "preflight_fallback")
+      .in("type", ["empty_funnel", "preflight_fallback"])
       .gte("created_at", dayStart),
   ]);
 
@@ -107,7 +109,7 @@ function qualityLines(events: { payload: unknown }[], preflightFallbacks: number
   // the signal, so surface the fallback count even with zero quality events.
   if (events.length === 0) {
     return preflightFallbacks > 0
-      ? [`Quality pulse:`, `  no idea qualified — ${preflightFallbacks} pre-flight fallback${preflightFallbacks > 1 ? "s" : ""} (no idea/review notes shipped)`, ``]
+      ? [`Quality pulse:`, `  empty funnel — ${preflightFallbacks} subscriber${preflightFallbacks > 1 ? "s" : ""} got the funnel-numbers email (zero shippable survivors)`, ``]
       : [];
   }
   const q = events.map((e) => (e.payload ?? {}) as QualityPayload);
@@ -125,7 +127,7 @@ function qualityLines(events: { payload: unknown }[], preflightFallbacks: number
     `Quality pulse:`,
     `  note mix: ${Object.entries(kinds)
       .map(([k, n]) => `${k}×${n}`)
-      .join(", ")}${preflightFallbacks > 0 ? ` (${preflightFallbacks} pre-flight fallback${preflightFallbacks > 1 ? "s" : ""})` : ""}`,
+      .join(", ")}${preflightFallbacks > 0 ? ` (${preflightFallbacks} empty-funnel morning${preflightFallbacks > 1 ? "s" : ""})` : ""}`,
     `  avg conviction ${avg(convictions)} · avg catalyst ${avg(catalysts)} · editorial revised ${revised}/${q.length} · avg gen ${avg(genMinutes)} min`,
     ``,
   ];

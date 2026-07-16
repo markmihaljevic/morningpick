@@ -57,7 +57,7 @@ async function main() {
     philosophy: (row?.philosophy as string) ?? "",
   };
 
-  const { items: coverageItems, taste } = await getCoverageContext(subscriber.id);
+  const { items: coverageItems } = await getCoverageContext(subscriber.id);
   const coverage = coverageForPrompt(coverageItems);
 
   // DEMO_TICKER=THX.L forces a full idea note on one name — bypasses selection
@@ -101,15 +101,32 @@ async function main() {
   console.error(`Desk decision: ${decision.kind} — ${decision.reason}`);
 
   if (decision.kind === "no_idea") {
-    // Rule 3 demo: the idea slot, honestly empty. Canned rejections shaped
-    // like the walk's real ones (the production path passes real attempts).
+    // Rule 5 demo: the empty-funnel morning, with canned funnel numbers
+    // shaped like the real ones (the production path passes real stats).
+    const demoFunnel = {
+      perScreen: [
+        { label: "US Small/Micro Cap Value", count: 412 },
+        { label: "UK Small/Micro Cap Value", count: 187 },
+        { label: "Continental Europe Small/Micro Cap Value", count: 96 },
+      ],
+      poolAfterDedup: 3,
+      domicileDropped: 1,
+      allowedCountries: ["AU", "CA", "GB", "US"],
+      eligible: 3,
+      ranked: 2,
+      quarantined: 1,
+      blockedAhead: [
+        { ticker: "THX.L", name: "Thor Explorations Ltd.", priorTicker: "THX.L", priorDate: "2026-07-09" },
+        { ticker: "PHAR.L", name: "Pharos Energy plc", priorTicker: "PHAR.L", priorDate: "2026-07-08" },
+      ],
+    };
     const attempts = [
-      { ticker: "CGEO.L", expectedConviction: 3, reason: "A $1.3B Georgian holding company near 52-week highs — roughly triple the mandate's size ceiling, with no visible catalyst." },
-      { ticker: "ASA", expectedConviction: 3, reason: "A closed-end gold fund at a modest discount to NAV with no reason for the gap to close — structure, not mispricing." },
-      { ticker: "RTC.L", expectedConviction: 3, reason: "Illiquid micro-cap staffing name; a sharp drop with no data to explain a mispricing thesis." },
+      { ticker: "THX.L", expectedConviction: 0, reason: "no-repeat: already sent July 9, no new reported period" },
+      { ticker: "PHAR.L", expectedConviction: 0, reason: "no-repeat: already sent July 8, no new reported period" },
     ];
     const note =
-      (await writeNoIdeaNote({ attempts, reason: decision.reason })) ?? fallbackNoIdeaBody();
+      (await writeNoIdeaNote({ attempts, funnel: demoFunnel, reason: decision.reason })) ??
+      fallbackNoIdeaBody(demoFunnel);
     const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
     const html = renderMemoEmail({
       coverNote: note.body,
@@ -144,6 +161,9 @@ async function main() {
     | { book: unknown[]; headlines: Record<string, { date: string; title: string; site: string }[]>; upcomingEarnings: Record<string, string> }
     | undefined;
   let data: TickerData | null = null;
+  let funnelContext:
+    | { rank: number | null; cleared: number; blockedAhead: number; quietList: boolean; conviction: number; convictionReason: string; whatWouldChange: string }
+    | undefined;
   const memoKind: NoteKind = decision.kind;
 
   if (decision.kind === "idea" && demoTicker) {
@@ -182,7 +202,7 @@ async function main() {
         memoId: r.id as string,
         date: r.delivery_date as string,
       }));
-    console.error("Running idea funnel with pre-flight…");
+    console.error("Running the two-tier funnel (screen → score → top survivor)…");
     const idea = await selectIdeaWithPreflight({
       subscriberId: subscriber.id,
       profile,
@@ -190,27 +210,26 @@ async function main() {
       storedScreens: (row?.screens as ScreenParams[]) ?? [],
       storedScreensVersion: (row?.screens_version as number) ?? -1,
       excluded,
-      recentTickers: coverageItems.slice(0, 10).map((c) => c.ticker),
-      taste,
       sentCompanies,
     });
+    console.error(
+      `Funnel: ${JSON.stringify({ perScreen: idea.funnel.perScreen, domicileDropped: idea.funnel.domicileDropped, eligible: idea.funnel.eligible, ranked: idea.funnel.ranked, rank: idea.funnel.rank, quietList: idea.funnel.quietList, topComposite: idea.funnel.topComposite, trailingAvgTop: idea.funnel.trailingAvgTop })}`,
+    );
     for (const a of idea.attempts) {
       console.error(
-        `  preflight ${a.ticker}: ${a.write ? "WRITE" : "VETO"} (${a.expectedConviction}/10 — ${a.reason})`,
+        `  walk ${a.ticker}: ${a.write ? `SHIP (conviction ${a.expectedConviction}/10 — ${a.reason})` : `skip (${a.reason})`}`,
       );
     }
     if (!idea.ok) {
-      // Rule 3 (mirrors the worker): no qualifying idea → say exactly that
-      // in the idea slot, from the walk's REAL rejections. Never a review.
-      const failSummary = idea.attempts
-        .map((a) => `${a.ticker} (${a.expectedConviction}/10: ${a.reason})`)
-        .join("; ");
-      console.error(`No idea qualified — composing the no-idea note.`);
+      // Rule 5 (mirrors the worker): the only legitimate empty morning —
+      // state the funnel in numbers, name names, ask which filter to loosen.
+      console.error(`Empty funnel — composing the funnel-numbers note.`);
       const note =
         (await writeNoIdeaNote({
           attempts: idea.attempts.map((a) => ({ ticker: a.ticker, expectedConviction: a.expectedConviction, reason: a.reason })),
-          reason: `today's candidates failed pre-flight: ${failSummary}`,
-        })) ?? fallbackNoIdeaBody();
+          funnel: idea.funnel,
+          reason: idea.rationale,
+        })) ?? fallbackNoIdeaBody(idea.funnel);
       const dateLine = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
       const noIdeaHtml = renderMemoEmail({
         coverNote: note.body,
@@ -243,9 +262,21 @@ async function main() {
       ticker = idea.ticker;
       companyName = idea.companyName;
       data = idea.data;
-      selectionRationale = idea.ok
-        ? idea.rationale
-        : `${idea.rationale} — NOTE: pre-flight scored this ${idea.preflight.expectedConviction}/10 (${idea.preflight.reason}); write it with honest conviction, do not oversell.`;
+      funnelContext = {
+        rank: idea.funnel.rank,
+        cleared: idea.funnel.ranked,
+        blockedAhead: idea.funnel.blockedAhead.length,
+        quietList: idea.funnel.quietList,
+        conviction: idea.preflight.expectedConviction,
+        convictionReason: idea.preflight.reason,
+        whatWouldChange: idea.preflight.whatWouldChange,
+      };
+      selectionRationale =
+        `${idea.rationale} — conviction ${idea.preflight.expectedConviction}/10 (${idea.preflight.reason}).` +
+        (idea.preflight.whatWouldChange ? ` What would raise it: ${idea.preflight.whatWouldChange}` : "") +
+        (idea.funnel.quietList
+          ? ` — QUIET LIST: today's top score sits well below its trailing average; frame this plainly as the best of a quiet list, never oversold.`
+          : "");
       console.error(`Selected: ${ticker} — ${selectionRationale}`);
     }
   }
@@ -364,6 +395,7 @@ async function main() {
     meta: memo.meta,
     isReview: memoKind === "review",
     attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
+    funnel: memoKind === "idea" || memoKind === "second_look" ? funnelContext : undefined,
   });
   const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
   const coverSubject =

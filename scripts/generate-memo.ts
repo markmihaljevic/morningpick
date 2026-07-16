@@ -1,6 +1,6 @@
 /**
  * Offline memo-quality iteration. Runs the full profile-aware funnel
- * (derive screens → pool → shortlist → enrich → pick) for a test profile
+ * (derive screens → pool → score → top name) for a test profile
  * and prints the memo, without touching subscribers or sending email.
  *
  *   npx tsx scripts/generate-memo.ts            # full funnel for test profile
@@ -16,8 +16,7 @@ import { db } from "../lib/db";
 import type { Profile } from "../lib/profile";
 import { deriveScreens, buildCandidatePool } from "../lib/screens";
 import { ensureFactorTable, loadFactorRows } from "../lib/factor-table";
-import { scoreCandidates, deriveWeights } from "../lib/scoring";
-import { pickFromRanked } from "../lib/pick";
+import { scoreCandidates, deriveWeights, deriveValuationMetricWeights } from "../lib/scoring";
 import { fetchTickerData } from "../lib/fmp";
 import { generateMemo } from "../lib/memo";
 
@@ -69,25 +68,28 @@ async function main() {
     console.error(JSON.stringify(screens, null, 2));
 
     console.error("Building candidate pool…");
-    const pool = await buildCandidatePool(screens);
-    console.error(`Pool: ${pool.length} candidates`);
+    const { pool, stats } = await buildCandidatePool(screens, profile);
+    console.error(
+      `Pool: ${pool.length} candidates (${stats.domicileDropped} dropped outside geographies)`,
+    );
 
     console.error("Scoring (pure code, no LLM)…");
     await ensureFactorTable();
     const factorRows = await loadFactorRows(pool.map((c) => c.ticker));
     const weights = deriveWeights(profile);
-    const { ranked, quarantined } = scoreCandidates(pool, factorRows, weights);
+    const valuationMetrics = deriveValuationMetricWeights(profile);
+    const { ranked, quarantined } = scoreCandidates(pool, factorRows, weights, valuationMetrics);
     console.error(
-      `Ranked ${ranked.length} (quarantined ${quarantined.length}); weights ${JSON.stringify(weights)}`,
+      `Ranked ${ranked.length} (quarantined ${quarantined.length}); weights ${JSON.stringify(weights)}; valuation metrics ${JSON.stringify(valuationMetrics)}`,
     );
     console.error(
       `Top 10: ${ranked.slice(0, 10).map((c) => `${c.ticker}(${Math.round(c.composite)})`).join(", ")}`,
     );
 
-    console.error("Pick step…");
-    const pick = await pickFromRanked({ profile, ranked: ranked.slice(0, 20), recentMemos: [] });
-    ticker = pick.ticker;
-    rationale = pick.rationale;
+    // One shipping rule: the top-ranked name IS the selection.
+    if (ranked.length === 0) throw new Error("Zero rankable survivors.");
+    ticker = ranked[0].ticker;
+    rationale = `Top of today's ranked list (score ${Math.round(ranked[0].composite)}) of ${ranked.length} survivors.`;
     companyName = pool.find((c) => c.ticker === ticker)?.name;
     console.error(`Selected: ${ticker} — ${rationale}`);
   }

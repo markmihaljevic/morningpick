@@ -24,7 +24,6 @@ import {
   coverageForPrompt,
   extractReviewGist,
   type CoverageItem,
-  type TasteSignal,
 } from "@/lib/coverage";
 import { decideNote, noIdeaNote, type NoteKind } from "@/lib/desk-editor";
 import { selectIdeaWithPreflight, updateWatchlist, hasReportedSince } from "@/lib/select-idea";
@@ -68,7 +67,21 @@ interface SavedPlan {
   followupContext?: { originalMarkdown: string; originalDate: string; priceThen: number | null; priceNow: number | null; triggerDetail: string };
   secondLookContext?: { originalMarkdown: string; originalDate: string; development: string };
   reviewContext?: { book: unknown[]; headlines: Record<string, { date: string; title: string; site: string }[]>; upcomingEarnings: Record<string, string>; priorReviews?: { date: string; headline: string; action: string }[] };
-  noIdeaContext?: { attempts: { ticker: string; expectedConviction: number; reason: string }[] };
+  noIdeaContext?: {
+    attempts: { ticker: string; expectedConviction: number; reason: string }[];
+    funnel?: import("@/lib/select-idea").FunnelStats;
+  };
+  /** The placing line + honest-conviction signals for idea notes (July 16):
+   * "first of the N names that cleared your filters this morning". */
+  funnelContext?: {
+    rank: number | null;
+    cleared: number;
+    blockedAhead: number;
+    quietList: boolean;
+    conviction: number;
+    convictionReason: string;
+    whatWouldChange: string;
+  };
   referenceLinks: { label: string; url: string }[];
   researchLinks: { label: string; url: string }[];
   primarySources: { url: string; title: string; type: "interview" | "earnings_call" | "deep_dive" | "analysis"; note: string }[];
@@ -172,7 +185,6 @@ async function buildPlan(
   profile: Profile,
   profileRow: { version?: unknown; screens?: unknown; screens_version?: unknown } | null,
   coverageItems: CoverageItem[],
-  taste: TasteSignal,
 ): Promise<SavedPlan> {
   const coverage = coverageForPrompt(coverageItems);
   const firstNote = coverageItems.length === 0;
@@ -209,6 +221,7 @@ async function buildPlan(
   let secondLookContext: SavedPlan["secondLookContext"];
   let reviewContext: SavedPlan["reviewContext"];
   let noIdeaContext: SavedPlan["noIdeaContext"];
+  let funnelContext: SavedPlan["funnelContext"];
   let data: TickerData | null = null;
   let kindOverride: NoteKind | null = null;
 
@@ -227,34 +240,9 @@ async function buildPlan(
       if (!released) excluded.push(c.ticker);
     }
 
-    // Cross-day veto memory: names pre-flight rejected in the last 14 days
-    // are excluded up front, so the walk reaches FRESH candidates instead of
-    // re-litigating the same rejects every morning (observed: CGEO.L vetoed
-    // three mornings running while fallbacks shipped in the idea slot).
-    // RELEASE-AWARE, like the coverage exclusion above: a results release
-    // after the veto re-admits the name — yesterday's "no catalyst yet" is
-    // exactly the judgment new results can overturn, and a merely-vetoed
-    // name must never be harder to pitch than an already-sent one.
-    const { data: vetoEvents } = await db()
-      .from("events")
-      .select("payload, created_at")
-      .eq("type", "preflight_fallback")
-      .eq("subscriber_id", subscriberId)
-      .gte("created_at", new Date(Date.now() - 14 * 86_400_000).toISOString());
-    const lastVeto = new Map<string, string>(); // ticker → latest veto date
-    for (const ev of vetoEvents ?? []) {
-      const atts = (ev.payload as { attempts?: { ticker?: string }[] } | null)?.attempts ?? [];
-      const day = String(ev.created_at).slice(0, 10);
-      for (const a of atts) {
-        if (!a.ticker) continue;
-        const prev = lastVeto.get(a.ticker);
-        if (!prev || day > prev) lastVeto.set(a.ticker, day);
-      }
-    }
-    for (const [vetoedTicker, vetoDate] of lastVeto) {
-      const released = await hasReportedSince(vetoedTicker, vetoDate);
-      if (!released) excluded.push(vetoedTicker);
-    }
+    // (Cross-day veto memory RETIRED, July 16: with the conviction gate gone
+    // there are no vetoes to remember — the score judges, the top survivor
+    // ships. Feedback moves a weight or a filter, never a hidden bar.)
 
     // Identity-keyed sent history (no-repeat rule 1): every listing of a
     // sent company is consumed by one send — THX.L and THX.V are one idea.
@@ -285,24 +273,20 @@ async function buildPlan(
       storedScreens: (profileRow?.screens as ScreenParams[]) ?? [],
       storedScreensVersion: (profileRow?.screens_version as number) ?? -1,
       excluded,
-      recentTickers: coverageItems.slice(0, 10).map((c) => c.ticker),
-      taste,
       sentCompanies,
     });
 
     if (!idea.ok) {
-      // Rule 3 (John, July 14): no qualifying idea on an idea day → say
-      // exactly that in the idea slot and explain why. NEVER substitute a
-      // review silently (that shipped three consecutive reviews, July 13-15).
-      const failSummary = idea.attempts
-        .map((a) => `${a.ticker} (${a.expectedConviction}/10: ${a.reason})`)
-        .join("; ");
-      decision = noIdeaNote({ reason: `today's candidates failed pre-flight: ${failSummary}` });
-      await logEvent("preflight_fallback", {
+      // Rule 5 (John, July 16): the only legitimate empty morning is the
+      // screen itself returning zero survivors (or every survivor already
+      // held) — the email states the funnel in numbers and asks which
+      // filter to loosen. Never a silent review, never a vague apology.
+      decision = noIdeaNote({ reason: idea.rationale });
+      await logEvent("empty_funnel", {
         subscriberId,
-        payload: { attempts: idea.attempts, fellBackTo: decision.kind },
+        payload: { funnel: idea.funnel, reason: idea.rationale },
       });
-      noIdeaContext = { attempts: idea.attempts };
+      noIdeaContext = { attempts: idea.attempts, funnel: idea.funnel };
     }
 
     await updateWatchlist({
@@ -316,9 +300,23 @@ async function buildPlan(
       ticker = idea.ticker;
       companyName = idea.companyName;
       data = idea.data;
-      selectionRationale = idea.ok
-        ? idea.rationale
-        : `${idea.rationale} — NOTE: pre-flight scored this ${idea.preflight.expectedConviction}/10 (${idea.preflight.reason}); write it with honest conviction, do not oversell.`;
+      funnelContext = {
+        rank: idea.funnel.rank,
+        cleared: idea.funnel.ranked,
+        blockedAhead: idea.funnel.blockedAhead.length,
+        quietList: idea.funnel.quietList,
+        conviction: idea.preflight.expectedConviction,
+        convictionReason: idea.preflight.reason,
+        whatWouldChange: idea.preflight.whatWouldChange,
+      };
+      // Rule 4: conviction carries the quality signal, not silence. The name
+      // ships at whatever the honest number is; a quiet list is said plainly.
+      selectionRationale =
+        `${idea.rationale} — conviction ${idea.preflight.expectedConviction}/10 (${idea.preflight.reason}).` +
+        (idea.preflight.whatWouldChange ? ` What would raise it: ${idea.preflight.whatWouldChange}` : "") +
+        (idea.funnel.quietList
+          ? ` — QUIET LIST: today's top score sits well below its trailing average; frame this plainly as the best of a quiet list, never oversold.`
+          : "");
 
       // Rule 3: a company that re-qualified on new results writes as a
       // SECOND LOOK — the note opens with what changed since the last send
@@ -434,6 +432,7 @@ async function buildPlan(
     secondLookContext,
     reviewContext,
     noIdeaContext,
+    funnelContext,
     referenceLinks: researchLinks,
     researchLinks,
     primarySources: [],
@@ -497,7 +496,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
   } else {
     // The analyst's memory: recent notes with live returns + subscriber
     // reactions. Needed on every path (book strip); quotes are day-cached.
-    const { items: coverageItems, taste } = await getCoverageContext(subscriber.id);
+    const { items: coverageItems } = await getCoverageContext(subscriber.id);
 
     let plan = delivery.plan ?? null;
     let data: TickerData | null = null;
@@ -507,7 +506,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       // to generation with a full, fresh function budget.
       console.log(`Resuming checkpointed plan for ${delivery.id}: ${plan.kind} on ${plan.ticker}`);
     } else {
-      plan = await buildPlan(delivery, subscriber.id, subscriber.plan, profile, profileRow, coverageItems, taste);
+      plan = await buildPlan(delivery, subscriber.id, subscriber.plan, profile, profileRow, coverageItems);
       await db().from("deliveries").update({ plan }).eq("id", delivery.id);
       await logEvent("plan_checkpointed", {
         subscriberId: subscriber.id,
@@ -520,15 +519,18 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     const memoKind = plan.kind;
 
     if (memoKind === "no_idea") {
-      // Rule 3 (John, July 14): the idea slot, honestly empty — a short
-      // register-gated email saying exactly that and why. No memo pipeline,
-      // no attachments. Composed, inserted, and sent here; keep the send
-      // tail in sync with the shared one at the bottom of this function.
+      // Rule 5 (John, July 16): the only legitimate empty morning — the
+      // screen itself returned zero survivors (or every survivor is already
+      // held). The email states the funnel in numbers, names names, and asks
+      // which filter to loosen. No memo pipeline, no attachments. Composed,
+      // inserted, and sent here; keep the send tail in sync with the shared
+      // one at the bottom of this function.
       const note =
         (await writeNoIdeaNote({
           attempts: plan.noIdeaContext?.attempts ?? [],
+          funnel: plan.noIdeaContext?.funnel,
           reason: plan.selectionRationale,
-        })) ?? fallbackNoIdeaBody();
+        })) ?? fallbackNoIdeaBody(plan.noIdeaContext?.funnel);
       const dateLine = new Date(delivery.delivery_date + "T00:00:00Z").toLocaleDateString("en-GB", {
         day: "numeric",
         month: "long",
@@ -562,8 +564,10 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
         company_key: "kind:no_idea", // sentinel — never a company identity
         company_name: null,
         title,
-        content_md: `# ${note.subject}\n\n${note.body}\n\n## Why nothing qualified (internal record)\n\n${(plan.noIdeaContext?.attempts ?? [])
-          .map((a) => `- ${a.ticker} (${a.expectedConviction}/10): ${a.reason}`)
+        content_md: `# ${note.subject}\n\n${note.body}\n\n## The funnel (internal record)\n\n${
+          plan.noIdeaContext?.funnel ? JSON.stringify(plan.noIdeaContext.funnel, null, 1) : "(no funnel stats)"
+        }\n\n${(plan.noIdeaContext?.attempts ?? [])
+          .map((a) => `- ${a.ticker}: ${a.reason}`)
           .join("\n")}`,
         content_html: html,
         model: config().MEMO_MODEL,
@@ -571,7 +575,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
         kind: "no_idea",
         pitch_price: null,
         pitch_currency: null,
-        extras: { attempts: plan.noIdeaContext?.attempts ?? [], dateLine },
+        extras: { attempts: plan.noIdeaContext?.attempts ?? [], funnel: plan.noIdeaContext?.funnel ?? null, dateLine },
       });
       if (noIdeaError) throw new Error(`Memo insert failed: ${noIdeaError.message}`);
 
@@ -654,7 +658,10 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       kind: memoKind,
       ticker,
       conviction: memo.meta?.conviction ?? null,
-      catalystStrength: Number(selectionRationale.match(/catalyst strength (\d+)\/10/)?.[1] ?? NaN) || null,
+      // Retired with the pick step (July 16) — its "catalyst strength N/10"
+      // phrase was the only producer; a regex over free text would now only
+      // ever false-positive on assessor prose.
+      catalystStrength: null,
       editorialRevised: memo.editorial.revised,
       editorialIssues: memo.editorial.issueCount,
       verifyCritical: memo.verification.critical_issues.length,
@@ -711,6 +718,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       meta: memo.meta,
       isReview: memoKind === "review",
       attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
+      funnel: memoKind === "idea" || memoKind === "second_look" ? plan.funnelContext : undefined,
     });
     const hook = h1Title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
     // Rule 4: the subject says what the email IS — reviews lead "Your book —";

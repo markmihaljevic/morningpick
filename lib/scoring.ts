@@ -112,6 +112,51 @@ function meanOf(...vals: (number | null)[]): number | null {
   return present.length > 0 ? present.reduce((a, b) => a + b, 0) / present.length : null;
 }
 
+/** Weighted mean over (value, weight) pairs, skipping nulls. */
+function weightedMeanOf(pairs: [number | null, number][]): number | null {
+  let sum = 0;
+  let wSum = 0;
+  for (const [v, w] of pairs) {
+    if (v === null || w <= 0) continue;
+    sum += v * w;
+    wSum += w;
+  }
+  return wSum > 0 ? sum / wSum : null;
+}
+
+/** Relative weights of the metrics INSIDE the valuation factor. */
+export interface ValuationMetricWeights {
+  pTBV: number;
+  pS: number;
+  evEbitda: number;
+  fcfYield: number;
+  earnYield: number;
+}
+
+export const DEFAULT_VALUATION_METRICS: ValuationMetricWeights = {
+  pTBV: 1, pS: 1, evEbitda: 1, fcfYield: 1, earnYield: 1,
+};
+
+/**
+ * Which multiples lead the valuation factor for THIS user (John's July 16
+ * rule 2: "absolute valuation weighted heaviest — P/TBV and P/S first for
+ * this user, per my July 2 reply"). Explicit structured.valuation_metrics
+ * (set by the reply interpreter) wins; the deep-value heuristic doubles
+ * P/TBV and P/S. Logged with the factor weights every run.
+ */
+export function deriveValuationMetricWeights(profile: Profile): ValuationMetricWeights {
+  const explicit = (profile.structured as { valuation_metrics?: Partial<ValuationMetricWeights> })
+    ?.valuation_metrics;
+  if (explicit && Object.values(explicit).some((v) => typeof v === "number")) {
+    return { ...DEFAULT_VALUATION_METRICS, ...explicit };
+  }
+  const text = `${JSON.stringify(profile.structured)} ${profile.philosophy}`.toLowerCase();
+  if (/deep value|net-net|tangible book|p\/tbv|price to sales|p\/s|cigar butt|below book/.test(text)) {
+    return { ...DEFAULT_VALUATION_METRICS, pTBV: 2, pS: 2 };
+  }
+  return DEFAULT_VALUATION_METRICS;
+}
+
 /**
  * Per-user factor weights: start from the course defaults, then let the
  * profile move them. Explicit `structured.factor_weights` (set by the reply
@@ -154,6 +199,7 @@ export function scoreCandidates(
   pool: Candidate[],
   factorRows: Map<string, FactorRow>,
   weights: FactorWeights,
+  valuationMetrics: ValuationMetricWeights = DEFAULT_VALUATION_METRICS,
 ): { ranked: ScoredCandidate[]; quarantined: ScoredCandidate[] } {
   interface Working extends ScoredCandidate {
     raw: {
@@ -302,7 +348,14 @@ export function scoreCandidates(
   const ranked = working
     .map((w, i) => {
       const factors: ScoredCandidate["factors"] = {
-        valuation: meanOf(cols.pTBV[i], cols.pS[i], cols.evEbitda[i], cols.fcfYield[i], cols.earnYield[i]) ?? undefined,
+        valuation:
+          weightedMeanOf([
+            [cols.pTBV[i], valuationMetrics.pTBV],
+            [cols.pS[i], valuationMetrics.pS],
+            [cols.evEbitda[i], valuationMetrics.evEbitda],
+            [cols.fcfYield[i], valuationMetrics.fcfYield],
+            [cols.earnYield[i], valuationMetrics.earnYield],
+          ]) ?? undefined,
         returns: meanOf(cols.roic[i], cols.roce[i], cols.roe[i]) ?? undefined,
         marginQuality: meanOf(cols.ebitdaMargin[i], cols.netMargin[i], cols.incomeQuality[i]) ?? undefined,
         capitalDiscipline: meanOf(cols.divCoverage[i], cols.capexToOCF[i]) ?? undefined,

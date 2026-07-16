@@ -1,10 +1,8 @@
 import { db, logEvent } from "./db";
 import type { Profile } from "./profile";
 import { getSubscriberScreens, buildCandidatePool, type ScreenParams } from "./screens";
-import type { Taste, WatchlistEntry } from "./selection";
 import { ensureFactorTable, loadFactorRows } from "./factor-table";
-import { scoreCandidates, deriveWeights } from "./scoring";
-import { pickFromRanked } from "./pick";
+import { scoreCandidates, deriveWeights, deriveValuationMetricWeights } from "./scoring";
 import { fetchTickerData, fetchUpcomingEarnings, type TickerData } from "./fmp";
 import { identityFromProfile, crossListingSpread } from "./company-key";
 import { preflightCheck, type PreflightResult } from "./preflight";
@@ -125,27 +123,63 @@ async function fmpGetEarnings(ticker: string): Promise<{ date?: string; epsActua
 const WATCHLIST_MAX_AGE_DAYS = 45;
 
 /**
- * The idea funnel: screen (exclude) → score (rank in code, no LLM) → pick
- * (small LLM step over the top of the ranked list) → FULL dataset →
- * head-of-research check with a CONVICTION GATE. A name that pre-flights
- * below the gate never leads the morning: the funnel walks DOWN the ranked
- * list to the next name instead. `ok: false` means the top of the ranked
- * list is genuinely weak today — the caller stewards the book rather than
- * shipping a name the analyst wouldn't put money behind.
+ * The idea funnel — two tiers, one shipping rule (John, July 16): the screen
+ * eliminates on hard preferences only; the SCORE does the judging; the
+ * morning email is the highest-scoring survivor that passes the no-repeat
+ * rules. No LLM pick, no conviction gate, no veto — a ranked list always has
+ * a top name. Conviction is assessed AFTER selection and rides along as the
+ * quality signal ("best of a quiet list, 4/10"), never as silence.
+ * `ok: false` means the screen itself returned zero survivors (or every
+ * survivor is a company already held) — the caller sends the funnel-in-
+ * numbers email, the only legitimate empty morning.
  */
 
-// 6, not 4: with cross-day veto memory excluding recent rejects upstream, a
-// deeper walk reaches genuinely fresh candidates before giving up (observed:
-// 4 attempts re-litigating the same names shipped three fallback mornings).
-const MAX_PREFLIGHT_ATTEMPTS = 6;
-const MIN_CONVICTION = 6;
-const RANKED_FOR_PICK = 20;
+// Bounds fetchTickerData calls when the top of the list is a run of already-
+// sent companies — a cost cap, not a judgment cap.
+const MAX_WALK_FETCHES = 25;
+// Rule 4: "if today's top score sits well below its trailing average, say
+// so plainly." Composite is a 0-100 percentile blend; 8 points below the
+// trailing average of the last 14 runs' top scores reads as genuinely quiet.
+const QUIET_LIST_TRAILING_RUNS = 14;
+const QUIET_LIST_DELTA = 8;
 
 export interface IdeaAttempt {
   ticker: string;
   write: boolean;
   expectedConviction: number;
   reason: string;
+}
+
+/** The funnel in numbers — rule 4's quiet-list signal and rule 5's email. */
+export interface FunnelStats {
+  perScreen: { label: string; count: number }[];
+  poolAfterDedup: number;
+  domicileDropped: number;
+  /** Example names the hard filters dropped — rule 5: a name the client
+   * cannot check is not information. */
+  domicileDroppedSample: { ticker: string; name?: string; country?: string }[];
+  sectorDropped: number;
+  sectorDroppedSample: { ticker: string; name?: string; sector?: string }[];
+  allowedCountries: string[] | null;
+  eligible: number;
+  ranked: number;
+  quarantined: number;
+  quarantinedSample: { ticker: string; name?: string; reason?: string }[];
+  /** 1-based rank of the shipped name on today's list (1 unless names ahead
+   * of it were skipped — held companies or technical fetch failures). */
+  rank: number | null;
+  /** Already-held companies skipped ahead of the shipped name. */
+  blockedAhead: { ticker: string; name?: string; priorTicker: string; priorDate: string }[];
+  /** Names skipped on dataset-fetch failure (technical, never judgment). */
+  fetchFailedAhead: string[];
+  topComposite: number | null;
+  shippedComposite: number | null;
+  /** Trailing average of daily top scores (last 14 RUNS, however old — a
+   * weekly subscriber's runs are weeks apart); null with <3 runs. */
+  trailingAvgTop: number | null;
+  quietList: boolean;
+  weights: Record<string, number>;
+  valuationMetrics: Record<string, number>;
 }
 
 export interface IdeaSelection {
@@ -156,12 +190,13 @@ export interface IdeaSelection {
   data: TickerData;
   preflight: PreflightResult;
   attempts: IdeaAttempt[];
-  /** Selector-flagged near-misses + pre-flight rejects — pipeline food. */
+  /** Retired with the pick step — kept for call-site compatibility. */
   flagged: { ticker: string; reason: string }[];
   upcomingEarnings: Record<string, string>;
   /** Set when a previously-sent company re-qualified on new results — the
    * note must open with what changed and reconcile the earlier figures. */
   requalifiedFrom?: SentCompany;
+  funnel: FunnelStats;
 }
 
 export async function selectIdeaWithPreflight(args: {
@@ -171,8 +206,6 @@ export async function selectIdeaWithPreflight(args: {
   storedScreens: ScreenParams[];
   storedScreensVersion: number;
   excluded: string[];
-  recentTickers: string[];
-  taste?: Taste;
   /** Identity-keyed sent history (rule 1) — every listing of a sent company. */
   sentCompanies?: SentCompany[];
 }): Promise<IdeaSelection> {
@@ -183,22 +216,11 @@ export async function selectIdeaWithPreflight(args: {
     args.storedScreens,
     args.storedScreensVersion,
   );
-  const pool = await buildCandidatePool(screens);
+  const { pool, stats } = await buildCandidatePool(screens, args.profile);
 
-  // The pipeline: names flagged on earlier mornings rejoin today's hunt.
-  const { data: watchRows } = await db()
-    .from("watchlist")
-    .select("ticker, name, reason, next_catalyst_date, added_at")
-    .eq("subscriber_id", args.subscriberId)
-    .gte("added_at", new Date(Date.now() - WATCHLIST_MAX_AGE_DAYS * 86_400_000).toISOString())
-    .order("next_catalyst_date", { ascending: true, nullsFirst: false })
-    .limit(12);
-  const watchlist: WatchlistEntry[] = (watchRows ?? []).map((w) => ({
-    ticker: w.ticker,
-    name: w.name,
-    reason: w.reason,
-    nextCatalystDate: w.next_catalyst_date,
-  }));
+  // (Watchlist re-entry RETIRED with the pick step, July 16: it pushed names
+  // into the pool AROUND the screens and the domicile filter — a structural
+  // hard-preference bypass. The screen decides who is on the page, period.)
 
   // Screening excluded; now the SCORER ranks. Exclusions: recent coverage +
   // profile avoid-list, applied before scoring so percentiles reflect the
@@ -209,27 +231,62 @@ export async function selectIdeaWithPreflight(args: {
     : [];
   for (const t of avoid) excluded.add(t);
   const eligible = pool.filter((c) => !excluded.has(c.ticker.toUpperCase()));
-  if (eligible.length === 0) throw new Error("No eligible candidates after exclusions.");
-  // Watchlist names keep their seat even when today's screens rotated past
-  // them (they'll be quarantined harmlessly if factor data is missing).
-  const inPool = new Set(eligible.map((c) => c.ticker.toUpperCase()));
-  for (const w of watchlist) {
-    const t = w.ticker.toUpperCase();
-    if (!inPool.has(t) && !excluded.has(t)) {
-      eligible.push({ ticker: w.ticker, name: w.name ?? w.ticker, source: "watchlist" });
-    }
-  }
 
-  // Score: pure code over the shared factor table. Zero tokens.
+  // Score: pure code over the shared factor table. Zero tokens. Weights AND
+  // the intra-valuation metric emphasis (P/TBV and P/S first for deep-value
+  // profiles) come from the profile and are logged every run — feedback moves
+  // a weight or a filter, never a hidden bar.
   await ensureFactorTable();
   const factorRows = await loadFactorRows(eligible.map((c) => c.ticker));
   const weights = deriveWeights(args.profile);
-  const { ranked, quarantined } = scoreCandidates(eligible, factorRows, weights);
-  if (ranked.length === 0) {
-    throw new Error(
-      `Scoring left no rankable candidates (pool ${pool.length}, eligible ${eligible.length}, quarantined ${quarantined.length}).`,
-    );
-  }
+  const valuationMetrics = deriveValuationMetricWeights(args.profile);
+  const { ranked, quarantined } = scoreCandidates(eligible, factorRows, weights, valuationMetrics);
+
+  // Rule 4's quiet-list signal: today's top score against the trailing
+  // average of the last N RUNS (read BEFORE logging today's run). Runs, not
+  // days: a weekly subscriber's runs are weeks apart and a day-windowed
+  // query would leave the baseline permanently null for them.
+  const { data: priorRuns } = await db()
+    .from("events")
+    .select("payload")
+    .eq("type", "scoring_ran")
+    .eq("subscriber_id", args.subscriberId)
+    .order("created_at", { ascending: false })
+    .limit(QUIET_LIST_TRAILING_RUNS);
+  const priorTops = (priorRuns ?? [])
+    .map((r) => (r.payload as { top5?: { s?: number }[] } | null)?.top5?.[0]?.s)
+    .filter((s): s is number => typeof s === "number" && Number.isFinite(s));
+  const trailingAvgTop =
+    priorTops.length >= 3 ? priorTops.reduce((a, b) => a + b, 0) / priorTops.length : null;
+  const topComposite = ranked.length > 0 ? ranked[0].composite : null;
+  const quietList =
+    trailingAvgTop !== null && topComposite !== null && topComposite < trailingAvgTop - QUIET_LIST_DELTA;
+
+  const funnel: FunnelStats = {
+    perScreen: stats.perScreen,
+    poolAfterDedup: stats.afterDedup,
+    domicileDropped: stats.domicileDropped,
+    domicileDroppedSample: stats.domicileDroppedSample,
+    sectorDropped: stats.sectorDropped,
+    sectorDroppedSample: stats.sectorDroppedSample,
+    allowedCountries: stats.allowedCountries,
+    eligible: eligible.length,
+    ranked: ranked.length,
+    quarantined: quarantined.length,
+    quarantinedSample: quarantined
+      .slice(0, 3)
+      .map((q) => ({ ticker: q.ticker, name: q.name, reason: q.quarantined })),
+    rank: null,
+    blockedAhead: [],
+    fetchFailedAhead: [],
+    topComposite,
+    shippedComposite: null,
+    trailingAvgTop,
+    quietList,
+    weights: weights as unknown as Record<string, number>,
+    valuationMetrics: valuationMetrics as unknown as Record<string, number>,
+  };
+
   await logEvent("scoring_ran", {
     subscriberId: args.subscriberId,
     payload: {
@@ -238,46 +295,27 @@ export async function selectIdeaWithPreflight(args: {
       ranked: ranked.length,
       quarantined: quarantined.length,
       weights,
+      valuationMetrics,
+      perScreen: stats.perScreen,
+      domicileDropped: stats.domicileDropped,
       top5: ranked.slice(0, 5).map((c) => ({ t: c.ticker, s: Math.round(c.composite) })),
     },
   });
 
-  const top = ranked.slice(0, RANKED_FOR_PICK);
-  const upcomingEarnings = await fetchUpcomingEarnings(top.map((c) => c.ticker));
-  const sectorByTicker = new Map(pool.map((c) => [c.ticker.toUpperCase(), c.sector]));
-  const recentWithSectors = args.recentTickers.map((t) => ({
-    ticker: t,
-    sector: sectorByTicker.get(t.toUpperCase()) ?? undefined,
-  }));
+  // Rule 5: the only legitimate empty morning is the screen itself returning
+  // zero survivors — surface the funnel in numbers, never a silent fallback.
+  if (ranked.length === 0) {
+    return emptyFunnelResult(
+      funnel,
+      `zero rankable survivors: screens returned ${stats.afterDedup} names, ` +
+        `${stats.domicileDropped} dropped outside the subscriber's geographies, ` +
+        `${eligible.length} eligible after coverage exclusions, ${quarantined.length} quarantined on data quality`,
+      [],
+    );
+  }
 
-  // Pick: the one small LLM step — judgment over the top of the ranked list.
-  const pick = await pickFromRanked({
-    profile: args.profile,
-    ranked: top,
-    recentMemos: recentWithSectors,
-    taste: args.taste,
-    watchlist,
-    upcomingEarnings,
-  });
+  const upcomingEarnings = await fetchUpcomingEarnings(ranked.slice(0, 20).map((c) => c.ticker));
 
-  const attempts: IdeaAttempt[] = [];
-  const flagged: { ticker: string; reason: string }[] = [...pick.watchlist];
-  let best: IdeaSelection | null = null;
-
-  // The conviction gate: pre-flight the pick with the full dataset; below the
-  // gate, take the NEXT name on the ranked list (its data is one cached fetch
-  // away) rather than shipping a name the analyst wouldn't back. The walk
-  // sticks to the subscriber's OWN screens — serendipity names are for the
-  // pick step's judgment, not for spending gate attempts on names outside
-  // the stated mandate (observed: two attempts burned on $1B+ serendipity
-  // banks against a sub-$500M profile).
-  const walkPool = top.filter(
-    (c) => !c.source?.startsWith("serendipity") || c.ticker.toUpperCase() === pick.ticker.toUpperCase(),
-  );
-  const walkOrder = [
-    pick.ticker,
-    ...walkPool.map((c) => c.ticker).filter((t) => t.toUpperCase() !== pick.ticker.toUpperCase()),
-  ];
   const sentByKey = new Map<string, SentCompany>();
   for (const s of args.sentCompanies ?? []) {
     // Most recent send per company wins (rows arrive newest-first). Indexed
@@ -286,31 +324,50 @@ export async function selectIdeaWithPreflight(args: {
     if (s.nameKey && !sentByKey.has(s.nameKey)) sentByKey.set(s.nameKey, s);
   }
 
-  let attemptsUsed = 0;
-  let lastBlocked: { ticker: string; data: TickerData } | null = null;
-  for (const ticker of walkOrder) {
-    if (attemptsUsed >= MAX_PREFLIGHT_ATTEMPTS) break;
-    const isPick = ticker.toUpperCase() === pick.ticker.toUpperCase();
-    const rankInfo = top.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase());
-    let rationale = isPick
-      ? pick.rationale
-      : `Next on the ranked list (factor score ${Math.round(rankInfo?.composite ?? 0)}) after the pick failed the conviction gate.`;
-    const data = await fetchTickerData(ticker);
+  // One shipping rule: walk the ranked list top-down; the first survivor past
+  // the no-repeat gate ships. No pick, no conviction gate — the score already
+  // judged. Skips are only no-repeat blocks and hard data failures (logged,
+  // and tracked SEPARATELY: a fetch outage must never masquerade as "your
+  // filters are too tight").
+  const attempts: IdeaAttempt[] = [];
+  let fetches = 0;
+  let fetchFailures = 0;
+  for (let i = 0; i < ranked.length && fetches < MAX_WALK_FETCHES; i++) {
+    const candidate = ranked[i];
+    const ticker = candidate.ticker;
+    fetches++;
+    let data: TickerData;
+    try {
+      data = await fetchTickerData(ticker);
+    } catch (e) {
+      console.error(`fetchTickerData failed for ${ticker} (skipping, technical):`, e);
+      fetchFailures++;
+      funnel.fetchFailedAhead.push(ticker);
+      attempts.push({ ticker, write: false, expectedConviction: 0, reason: "dataset fetch failed (technical skip)" });
+      continue;
+    }
 
-    // The no-repeat gate (rules 1-2-4): identity is the company, not the
-    // ticker — THX.L and THX.V are one idea. Runs BEFORE pre-flight so a
-    // blocked repeat never costs a conviction-gate attempt's LLM call.
+    // The no-repeat gate (July 12 rules): identity is the company, not the
+    // ticker — THX.L and THX.V are one idea.
     let requalifiedFrom: SentCompany | undefined;
+    let rationale =
+      `Ranked #${i + 1} of ${ranked.length} on today's list (factor score ${Math.round(candidate.composite)}; ` +
+      `top factors: valuation ${Math.round(candidate.factors.valuation ?? 0)}, returns ${Math.round(candidate.factors.returns ?? 0)}).`;
     const repeat = await checkNoRepeat(data, ticker, sentByKey);
     if (repeat.verdict === "blocked") {
       await logEvent("norepeat_blocked", {
         subscriberId: args.subscriberId,
         payload: { ticker, prior: repeat.prior.ticker, priorDate: repeat.prior.date, reason: repeat.reason },
       });
-      lastBlocked = { ticker, data };
-      continue; // a second listing is not a second idea — next candidate (no slot consumed)
+      funnel.blockedAhead.push({
+        ticker,
+        name: candidate.name,
+        priorTicker: repeat.prior.ticker,
+        priorDate: repeat.prior.date,
+      });
+      attempts.push({ ticker, write: false, expectedConviction: 0, reason: `no-repeat: ${repeat.reason}` });
+      continue;
     }
-    attemptsUsed++;
     if (repeat.verdict === "requalified") {
       requalifiedFrom = repeat.prior;
       rationale += ` — RE-QUALIFIED: ${repeat.development}`;
@@ -318,67 +375,90 @@ export async function selectIdeaWithPreflight(args: {
       rationale += ` — CROSS-LISTING SPREAD IDEA: ${repeat.detail}. The spread itself is the idea; quantify both prices and the gap, referencing the ${repeat.prior.date} note on ${repeat.prior.ticker}.`;
     }
 
+    // Conviction assessment — the quality signal the note carries, never a
+    // veto (rule 4). The name ships regardless of the number.
     const preflight = await preflightCheck({
       ticker,
       data,
       selectionRationale: rationale,
       profile: args.profile,
     });
-    const passes = preflight.write && preflight.expectedConviction >= MIN_CONVICTION;
     attempts.push({
       ticker,
-      write: passes,
+      write: true,
       expectedConviction: preflight.expectedConviction,
       reason: preflight.reason,
     });
+    funnel.rank = i + 1;
+    funnel.shippedComposite = candidate.composite;
 
-    const result: IdeaSelection = {
-      ok: passes,
+    return {
+      ok: true,
       ticker,
       companyName:
-        pool.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase())?.name ??
-        rankInfo?.name,
+        pool.find((c) => c.ticker.toUpperCase() === ticker.toUpperCase())?.name ?? candidate.name,
       rationale,
       data,
       preflight,
       attempts,
-      flagged,
+      flagged: [],
       upcomingEarnings,
       requalifiedFrom,
+      funnel,
     };
-    if (passes) return result;
-
-    // A gated name may simply be early — track it until it ripens.
-    if (!flagged.some((f) => f.ticker.toUpperCase() === ticker.toUpperCase())) {
-      flagged.push({
-        ticker,
-        reason: `conviction gate at ${preflight.expectedConviction}/10: ${preflight.reason}`,
-      });
-    }
-    if (!best || preflight.expectedConviction > best.preflight.expectedConviction) {
-      best = result;
-    }
   }
 
-  if (!best) {
-    // Every walkable candidate was blocked by the no-repeat gate (or the
-    // walk was empty). Return ok:false so the caller falls back to
-    // stewarding the book — never a hard-failed delivery over a full inbox.
-    if (lastBlocked) {
-      return {
-        ok: false,
-        ticker: lastBlocked.ticker,
-        rationale: "every candidate on today's ranked list is a company already sent (no new reported period) — steward the book instead",
-        data: lastBlocked.data,
-        preflight: { write: false, expectedConviction: 0, reason: "all candidates blocked by the no-repeat gate" },
-        attempts,
-        flagged,
-        upcomingEarnings,
-      };
-    }
-    throw new Error("Idea funnel produced no candidates.");
+  // The walk ended without shipping. Three distinct cases — only one of them
+  // is a legitimate empty morning, and none of them may be misreported:
+  const walked = fetches;
+  // (a) Data outage: every skip was a technical fetch failure. Throw so the
+  // delivery RETRIES — a broken data feed is not "your filters are too
+  // tight", and rule 5 forbids sending that email on a false premise.
+  if (fetchFailures === walked && walked > 0) {
+    throw new Error(
+      `Idea walk: all ${walked} dataset fetches failed (FMP outage?) — failing the delivery for retry, not an empty-funnel email.`,
+    );
   }
-  return { ...best, attempts };
+  // (b) The fetch cap stopped us with ranked names still unexamined: we have
+  // NOT established the funnel is empty, so say so honestly and retry.
+  if (ranked.length > walked) {
+    throw new Error(
+      `Idea walk: hit the ${MAX_WALK_FETCHES}-fetch cap with ${ranked.length - walked} ranked survivors unexamined ` +
+        `(${funnel.blockedAhead.length} already-held, ${fetchFailures} fetch failures among the walked) — ` +
+        `failing for retry rather than falsely reporting an empty funnel.`,
+    );
+  }
+  // (c) The genuine case: every ranked survivor was walked and blocked as an
+  // already-held company (with perhaps a few technical skips). Name them.
+  return emptyFunnelResult(
+    funnel,
+    `every ranked survivor was walked: ${funnel.blockedAhead.length} are companies already sent with no new reported period` +
+      (funnel.blockedAhead.length > 0
+        ? ` (${funnel.blockedAhead.map((b) => b.ticker).join(", ")})`
+        : "") +
+      (fetchFailures > 0 ? `; ${fetchFailures} skipped on dataset-fetch failure (${funnel.fetchFailedAhead.join(", ")})` : ""),
+    attempts,
+    upcomingEarnings,
+  );
+}
+
+function emptyFunnelResult(
+  funnel: FunnelStats,
+  reason: string,
+  attempts: IdeaAttempt[],
+  upcomingEarnings: Record<string, string> = {},
+): IdeaSelection {
+  return {
+    ok: false,
+    ticker: "",
+    rationale: reason,
+    data: null as unknown as TickerData, // rule-5 email path never touches the dataset
+    preflight: { expectedConviction: 0, reason, whatWouldChange: "" },
+    attempts,
+    flagged: [],
+    upcomingEarnings,
+    funnel,
+  };
 }
 
 /**

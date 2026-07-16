@@ -13,13 +13,15 @@ import { config } from "./config";
  *
  *  review   — the scheduled read-through of the book (daily plans, review
  *             weekdays, non-empty book only)
- *  idea     — a fresh pick (subject to the pre-flight conviction gate)
+ *  idea     — the highest-scoring screen survivor that passes the no-repeat
+ *             rules (July 16: no pick step, no conviction gate — the score
+ *             judges, conviction rides along as the quality signal)
  *  followup — a covered name reported or moved: a position update
  *             (idea days only — event-driven, not feedback-driven)
- *  no_idea  — an idea day where no qualifying idea survived the pipeline:
- *             say exactly that in the idea slot and explain why. NEVER
- *             substitute a review silently (that shipped three consecutive
- *             reviews, July 13-15, off conviction-gate coin flips).
+ *  no_idea  — the ONLY legitimate empty morning (July 16 rule 5): the screen
+ *             itself returned zero shippable survivors (or every survivor is
+ *             already held). The email states the funnel in numbers and asks
+ *             which filter to loosen. NEVER a silent review.
  *  second_look — retained for the no-repeat requalification path; the walk
  *             assigns it, never the editor.
  */
@@ -84,10 +86,10 @@ export async function decideNote(args: {
 }
 
 /**
- * When every candidate fails the conviction gate on an idea day: say exactly
- * that in the idea slot and explain why (John's rule 3). Never substitute a
- * review silently, and never lead the morning with a name the analyst
- * wouldn't put money behind — honest failure over fake output.
+ * The only legitimate empty morning (July 16 rule 5): the screen itself
+ * returned zero shippable survivors — the preferences are too tight. The
+ * email states the funnel in numbers and asks which filter to loosen. Never
+ * a silent review, never a vague apology.
  */
 export function noIdeaNote(args: { reason: string }): DeskDecision {
   return {

@@ -46,7 +46,7 @@ ALSO:
 - Plain prose. No markdown, bullets, headers, bold, links, or URLs.
 - No internal plumbing ("dataset", field names, currency-conversion asides).
 - Company names come from the note verbatim — never infer a name from a ticker.
-- Every fact must already be in the full note below; you are compressing a fact-checked note from memory, not adding to it.
+- Every fact must already be in the full note below (the one exception: a PLACING LINE instruction in the user message supplies desk funnel numbers to use verbatim); you are compressing a fact-checked note from memory, not adding to it.
 - End with the attachment line ONLY as instructed in the user message.`;
 
 export interface CoverNote {
@@ -157,6 +157,18 @@ export async function writeCoverNote(args: {
   /** What is ACTUALLY attached — the closing line must never promise a PDF
    * that failed its gate. Omitted → assume both (legacy callers). */
   attachments?: { onePager: boolean; fullReport: boolean };
+  /** Idea days (July 16): the placing line — "first of the N names that
+   * cleared your filters this morning" — plus the honest conviction signal
+   * on a quiet list. */
+  funnel?: {
+    rank: number | null;
+    cleared: number;
+    blockedAhead: number;
+    quietList: boolean;
+    conviction: number;
+    convictionReason: string;
+    whatWouldChange: string;
+  };
 }): Promise<CoverNote | null> {
   const cfg = config();
   const att = args.attachments ?? { onePager: true, fullReport: true };
@@ -171,6 +183,41 @@ export async function writeCoverNote(args: {
   const kindNote = args.isReview
     ? 'This is a REVIEW DAY (a read-through of the book, no fresh pick): the subject MUST lead with "Your book — ".'
     : 'This is an IDEA DAY: the subject is "TICKER: hook" with the bare ticker.';
+  // The placing line (July 16): one line placing the name in this morning's
+  // funnel. Desk facts supplied here — they are not in the full note. Branch
+  // on RANK, never on blockedAhead alone: a technical fetch skip also moves
+  // the shipped name off rank 1, and "first of N" would then be false.
+  const f = args.funnel;
+  let placing = "";
+  if (f) {
+    const skippedAhead = (f.rank ?? 1) - 1;
+    const technicalAhead = Math.max(0, skippedAhead - f.blockedAhead);
+    placing =
+      skippedAhead === 0
+        ? `is the first of the ${f.cleared} names that cleared your filters this morning`
+        : technicalAhead === 0
+          ? `is the top of the ${f.cleared} names that cleared your filters this morning, once I set aside ${f.blockedAhead} you already hold`
+          : f.blockedAhead === 0
+            ? `is the top of the ${f.cleared} names that cleared your filters this morning, after ${technicalAhead} I couldn't verify data for today`
+            : `is the top of the ${f.cleared} names that cleared your filters this morning, once I set aside ${f.blockedAhead} you already hold and ${technicalAhead} I couldn't verify data for today`;
+  }
+  // Rule 4: conviction carries the quality signal, not silence — spoken
+  // plainly when the LIST is weak (quiet list) or the NAME is (low absolute
+  // conviction on a normal list).
+  const speakConviction = f ? f.quietList || f.conviction <= 4 : false;
+  const funnelNote = f
+    ? `PLACING LINE (desk facts, not in the note below — use these numbers verbatim): include ONE short line placing the name: it ${placing}.${
+        speakConviction
+          ? ` ${
+              f.quietList
+                ? "QUIET LIST: today's list is weaker than usual — say plainly this is the best of a quiet list"
+                : "THIN CASE: the conviction here is honestly low — say so plainly"
+            }, carry the conviction as "${f.conviction}/10", and give one line on what would raise it${
+              f.whatWouldChange ? ` (${f.whatWouldChange})` : ""
+            }. Honest, never apologetic.`
+          : ""
+      }`
+    : "";
 
   try {
     let repairNote = "";
@@ -186,7 +233,7 @@ export async function writeCoverNote(args: {
         messages: [
           {
             role: "user",
-            content: `<full_note ticker="${args.ticker}">\n${args.fullNoteMarkdown}\n</full_note>\n\n${kindNote}\n${attachNote}\n\n${repairNote}Write the morning email (subject + body).`,
+            content: `<full_note ticker="${args.ticker}">\n${args.fullNoteMarkdown}\n</full_note>\n\n${kindNote}\n${attachNote}${funnelNote ? `\n${funnelNote}` : ""}\n\n${repairNote}Write the morning email (subject + body).`,
           },
         ],
       });
@@ -256,67 +303,87 @@ export function fallbackCoverBody(args: {
   return attachLine ? `${safeOneLiner}\n\n${attachLine}` : safeOneLiner;
 }
 
-/** One pre-flight rejection, as logged by the walk — input to the no-idea note. */
+/** One walk skip, as logged by the funnel — input to the empty-funnel note. */
 export interface NoIdeaAttempt {
   ticker: string;
   expectedConviction: number;
   reason: string;
 }
 
-const NO_IDEA_SYSTEM = `You are an investment analyst writing the short morning email to a client on a day when NOTHING cleared your bar. Rule (from the client's own spec): "If no qualifying idea survives the pipeline on an idea day, say exactly that in the idea slot and explain why." Honest failure, told plainly, the way a person speaks — never apologetic, never padded.
+/** The funnel numbers the rule-5 email states (shape mirrors FunnelStats). */
+export interface NoIdeaFunnel {
+  perScreen: { label: string; count: number }[];
+  poolAfterDedup: number;
+  domicileDropped: number;
+  /** Named examples per cut — a name the client cannot check is not information. */
+  domicileDroppedSample?: { ticker: string; name?: string; country?: string }[];
+  sectorDropped?: number;
+  sectorDroppedSample?: { ticker: string; name?: string; sector?: string }[];
+  allowedCountries: string[] | null;
+  eligible: number;
+  ranked: number;
+  quarantined: number;
+  quarantinedSample?: { ticker: string; name?: string; reason?: string }[];
+  blockedAhead: { ticker: string; name?: string; priorTicker: string; priorDate: string }[];
+}
+
+const NO_IDEA_SYSTEM = `You are an investment analyst writing the short morning email to a client on the ONLY legitimate empty morning (the client's own July 16 rule 5): the screen itself returned zero shippable survivors. That means the client's own filters are too tight today — the email states the funnel in numbers, names names, and asks whether to loosen one. Plain, factual, never apologetic — a funnel report between people, not a confession.
 
 REGISTER RULES (checked in code):
-1. The SUBJECT must begin exactly "No new idea this morning" — optionally followed by " — " and a short honest hook ("No new idea this morning — everything cheap had a reason").
-2. Two or three short paragraphs, 60-180 words, blank line between paragraphs. Say what you looked at and why each fell short, in plain rounded words — "a Georgian bank ten times too big for your mandate", "a fund at a small discount with no reason for it to close". NEVER exact figures: no decimals, no precise percents; at most a handful of rounded numbers.
-3. Never name more than three or four candidates; group the rest ("a couple of illiquid micro-caps").
-4. Do NOT write a greeting, sign-off, or reply invitation — the template adds them. No markdown. Do not mention attachments (there are none), internal tools, screens, "pipelines", "pre-flight", or conviction scores — translate mechanics into an analyst's plain judgment.
-5. Close the last paragraph forward-looking in ONE sentence: what would change your mind or where you're looking next.`;
+1. The SUBJECT must begin exactly "Nothing cleared your filters this morning" (optionally " — " and a short factual hook).
+2. Two or three short paragraphs, 60-180 words, blank line between. State the funnel in NUMBERS: how many names the screens returned, and which filter took it to zero (geography, the cap band, data quality, or every survivor already held). Whole numbers are the content here; NEVER exact decimals.
+3. NAME COMPANIES: "a Japanese name" the client cannot check is not information. If survivors were skipped because the client already holds them, name the tickers. If a filter dropped names, use the SAMPLE examples in the funnel data (domicileDroppedSample, sectorDroppedSample, quarantinedSample) — two or three, each with its ticker and the reason it fell.
+4. END WITH THE QUESTION: ask plainly whether to loosen ONE named filter ("Widen the cap band above two billion, or add a geography? Reply and I'll adjust."). One question, concrete options.
+5. Do NOT write a greeting, sign-off, or reply invitation — the template adds them. No markdown. "Filters", "screens", and "cap band" are the client's own words and belong here; internal machinery ("pre-flight", "factor table", "pipeline") does not.`;
 
 const NO_IDEA_SCHEMA = {
   type: "object",
   properties: {
-    subject: { type: "string", description: 'Must begin "No new idea this morning".' },
-    body: { type: "string", description: "2-3 short paragraphs, 60-180 words, blank-line separated." },
+    subject: { type: "string", description: 'Must begin "Nothing cleared your filters this morning".' },
+    body: { type: "string", description: "2-3 short paragraphs, 60-180 words, blank-line separated, ending with the loosen-one-filter question." },
   },
   required: ["subject", "body"],
   additionalProperties: false,
 } as const;
 
-/** Deterministic register checks for the no-idea note (John's rule 3 + rule 4). */
+/** Deterministic register checks for the empty-funnel note (July 16 rule 5). */
 export function noIdeaRegisterIssues(subject: string, body: string): string[] {
   const issues: string[] = [];
-  if (!/^no new idea this morning\b/i.test(subject.trim())) {
-    issues.push(`Subject must begin "No new idea this morning" (got "${subject.slice(0, 50)}").`);
+  if (!/^nothing cleared your filters this morning\b/i.test(subject.trim())) {
+    issues.push(`Subject must begin "Nothing cleared your filters this morning" (got "${subject.slice(0, 60)}").`);
   }
-  // Rule 4: no ticker-led subject (that promises an idea), no "Your book".
+  // The subject conventions stay the visible check: no ticker-led subject
+  // (that promises an idea), no "Your book" (reviews only).
   if (/^your book\b/i.test(subject.trim())) issues.push('"Your book" leads review subjects only.');
   const words = body.split(/\s+/).filter(Boolean).length;
-  if (words > 185) issues.push(`Body is ${words} words — this note allows 60-180. Cut a candidate, not the plainness.`);
-  if (words < 50) issues.push(`Body is ${words} words — too thin to count as "explain why"; aim for 60-180.`);
+  if (words > 185) issues.push(`Body is ${words} words — this note allows 60-180. Cut a detail, not the numbers.`);
+  if (words < 50) issues.push(`Body is ${words} words — too thin to state the funnel in numbers; aim for 60-180.`);
   const paragraphs = body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
   if (paragraphs.length < 2) issues.push("Single-block email — two or three short paragraphs, blank line between.");
   if (paragraphs.length > 4) issues.push(`${paragraphs.length} paragraphs — collapse to two or three.`);
+  if (!/\d/.test(body)) issues.push("No numbers on the page — rule 5 says state the funnel in numbers.");
+  if (!/\?/.test(body)) issues.push("No question — the email must ask whether to loosen one named filter.");
   for (const m of exactDecimalFigures(body)) {
-    issues.push(`Exact figure "${m}" — round it the way a person speaks.`);
+    issues.push(`Exact figure "${m}" — whole numbers carry this email; round decimals away.`);
   }
-  if (/i read everything|reply to this email/i.test(body)) {
+  if (/i read everything|reply to this email in plain language/i.test(body)) {
     issues.push("Do not write the reply invitation — the template adds it.");
   }
-  // "screens" is analyst speech ("my screens run again tomorrow") — allowed;
-  // the machinery words below are not.
-  if (/pre-?flight|pipeline|conviction gate|screener|factor (score|table)/i.test(body)) {
-    issues.push("Internal plumbing on the page — translate mechanics into plain analyst judgment.");
+  if (/pre-?flight|pipeline|conviction gate|factor (score|table)/i.test(body)) {
+    issues.push("Internal plumbing on the page — filters, screens, and the cap band are the client's words; machinery is not.");
   }
   return issues;
 }
 
 /**
- * Write the no-idea morning email from the walk's actual rejections (rule 3:
- * never substitute a review silently). Register-gated with a repair loop.
- * Fail-open: null → the caller uses the static fallback.
+ * Write the empty-funnel morning email from the actual funnel numbers
+ * (rule 5: state how many names in, which filter cut to zero, name names,
+ * ask whether to loosen one). Register-gated with a repair loop. Fail-open:
+ * null → the caller uses the static fallback.
  */
 export async function writeNoIdeaNote(args: {
   attempts: NoIdeaAttempt[];
+  funnel?: NoIdeaFunnel;
   reason: string;
 }): Promise<CoverNote | null> {
   const cfg = config();
@@ -332,7 +399,7 @@ export async function writeNoIdeaNote(args: {
         messages: [
           {
             role: "user",
-            content: `Why the desk sent nothing today: ${args.reason}\n\n<rejected_candidates>\n${JSON.stringify(args.attempts)}\n</rejected_candidates>\n\n${repairNote}Write the morning email (subject + body).`,
+            content: `Why the funnel came back empty: ${args.reason}\n\n<funnel_numbers>\n${JSON.stringify(args.funnel ?? {})}\n</funnel_numbers>\n\n<walk_skips note="survivors skipped and why (already-held names etc.)">\n${JSON.stringify(args.attempts)}\n</walk_skips>\n\n${repairNote}Write the morning email (subject + body).`,
           },
         ],
       });
@@ -345,24 +412,33 @@ export async function writeNoIdeaNote(args: {
 
       const issues = noIdeaRegisterIssues(subject, body);
       if (issues.length === 0) return { subject, body };
-      console.warn(`No-idea note register issues (attempt ${attempt + 1}):`, issues);
+      console.warn(`Empty-funnel note register issues (attempt ${attempt + 1}):`, issues);
       repairNote = `IMPORTANT — your previous draft broke the register. Fix every item:\n${issues
         .map((i) => `- ${i}`)
         .join("\n")}\n\n`;
     }
     return null;
   } catch (e) {
-    console.error("No-idea note write failed (fail-open):", e);
+    console.error("Empty-funnel note write failed (fail-open):", e);
     return null;
   }
 }
 
-/** Static register-safe fallback when even the no-idea writer fails. */
-export function fallbackNoIdeaBody(): { subject: string; body: string } {
+/** Static register-safe fallback when even the empty-funnel writer fails. */
+export function fallbackNoIdeaBody(funnel?: NoIdeaFunnel): { subject: string; body: string } {
+  const screened = funnel?.poolAfterDedup;
+  const held = (funnel?.blockedAhead ?? []).map((b) => b.ticker);
+  const first =
+    screened !== undefined && screened > 0
+      ? `Your screens returned ${screened} names this morning, and not one cleared to shippable: ${
+          held.length > 0
+            ? `every survivor is a company you already hold (${held.slice(0, 6).join(", ")}) with nothing new reported`
+            : `after the geography and data-quality cuts, the list was empty`
+        }.`
+      : `Your ${funnel?.perScreen.length ?? "several"} screens returned 0 names this morning — the filters as set didn't return a single company.`;
   return {
-    subject: "No new idea this morning",
-    body:
-      "Nothing cleared the bar today. A handful of names looked cheap on the numbers, but each had a reason — too big for the mandate, too illiquid, or cheap without a catalyst — and I won't pitch a name I wouldn't put money behind.\n\nThe screens run again tomorrow morning, and a quiet day is part of the discipline: the ideas are only worth your time because the weak ones never reach you.",
+    subject: "Nothing cleared your filters this morning",
+    body: `${first}\n\nThat usually means the filters are set too tight for the current tape, not that the desk stopped looking. Worth loosening one — the cap band or a geography? Reply in plain language and I'll adjust tomorrow's run.`,
   };
 }
 
