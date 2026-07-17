@@ -8,6 +8,7 @@ import {
   type FiguresSnapshot,
 } from "./figures";
 import { getFilingFacts, STAGE_METRIC, PRODUCT_METRIC, type FilingFact } from "./filing-facts";
+import { finishSentence } from "./text";
 
 /**
  * The sector-aware "Valuation vs Peers" table, driven by John's
@@ -44,7 +45,7 @@ const DEFAULT_GROUP = compMetrics.default_group as string;
 export interface GroupResolution {
   key: string;
   group: GroupDef;
-  via: "industry" | "sector" | "default";
+  via: "industry" | "sector" | "default" | "holdco-detection";
 }
 
 /** Resolution order per the file: industry (exact) → sector → default, logged. */
@@ -301,13 +302,18 @@ export async function buildCompTable(args: {
   ticker: string;
   companyName?: string;
   data: TickerData;
+  /** Detected investment holdco (July 17): the table leads with price to
+   * PUBLISHED NAV per peer — industry mapping is too coarse to catch these. */
+  holdco?: boolean;
 }): Promise<CompTable | null> {
   try {
     const profile = (Array.isArray(args.data.profile) ? args.data.profile[0] : args.data.profile) as
       | { industry?: string; sector?: string; companyName?: string }
       | undefined;
-    const resolution = resolveMetricGroup(profile?.industry, profile?.sector);
-    if (resolution.via !== "industry" && profile?.industry) {
+    const resolution = args.holdco
+      ? { key: "investment_holdco", group: GROUPS["investment_holdco"], via: "holdco-detection" as const }
+      : resolveMetricGroup(profile?.industry, profile?.sector);
+    if (resolution.via !== "industry" && resolution.via !== "holdco-detection" && profile?.industry) {
       // Per the file: log ANY unmapped industry (sector fallback included) so
       // the mapping can be extended, instead of silently defaulting.
       await logEvent("comp_group_unmapped", {
@@ -383,12 +389,28 @@ export async function buildCompTable(args: {
       r.facts = facts.get(r.ticker.toUpperCase()) ?? new Map();
     }
 
+    // Rule 4 (July 17): a holdco table LEADS with P/Published NAV for every
+    // peer. When the SUBJECT has a sourced NAV but a peer doesn't, the peer
+    // is the wrong row — drop it (while ≥2 remain) BEFORE the every-row
+    // sourced rule below can kill the mandated lead column instead.
+    let workingPeers = peerRows;
+    if (args.holdco) {
+      const hasNav = (r: RowData) => {
+        const f = r.facts.get("p_nav");
+        return Boolean(f && f.value !== N_A && f.source);
+      };
+      if (hasNav(subject)) {
+        const withNav = peerRows.filter(hasNav);
+        if (withNav.length >= 2) workingPeers = withNav;
+      }
+    }
+
     // Column selection: candidates; sourced_only columns need a source on
     // EVERY row; then drop any column that would be n/a in every row (an
     // all-empty column is noise, whatever its kind); then the group's
     // tightness order caps the table at 6 metric columns (the file's "aim
     // for 4-6" — six renders fine at this layout's widths).
-    const allRows = [subject, ...peerRows];
+    const allRows = [subject, ...workingPeers];
     let columns = candidateColumns.filter((key) => METRICS[key]);
     columns = columns.filter((key) => {
       const def = METRICS[key];
@@ -435,10 +457,10 @@ export async function buildCompTable(args: {
     // wrong row — drop it, unless that leaves fewer than two peers, in which
     // case the offending columns go instead. Correct-or-nothing at the end.
     columns = columns.filter((key) => !cellsFor(subject, [key]).includes(N_A));
-    let keptPeers = peerRows.filter((r) => !cellsFor(r, columns).includes(N_A));
+    let keptPeers = workingPeers.filter((r) => !cellsFor(r, columns).includes(N_A));
     if (keptPeers.length < 2) {
       const badCols = new Set<string>();
-      for (const r of peerRows) {
+      for (const r of workingPeers) {
         columns.forEach((key) => {
           if (cellsFor(r, [key]).includes(N_A)) badCols.add(key);
         });
@@ -446,9 +468,21 @@ export async function buildCompTable(args: {
       const reduced = columns.filter((key) => !badCols.has(key));
       if (reduced.length >= 2) {
         columns = reduced;
-        keptPeers = peerRows;
+        keptPeers = workingPeers;
       }
     }
+    // Rule 4 (July 17): a column that reads n/m for MULTIPLE rows carries no
+    // comparison — drop it (two of five P/Es were n/m on the CGEO holdco
+    // table). The lead column stays; it defines the group's frame.
+    columns = columns.filter((key, idx) => {
+      if (idx === 0) return true;
+      const nmRows = [subject, ...keptPeers].filter((r) => cellsFor(r, [key])[0] === N_M).length;
+      return nmRows < 2;
+    });
+    // Re-admission: a peer dropped ONLY for an n/a in a column the n/m rule
+    // just removed is a fine row against the FINAL column set — re-select
+    // from the full peer list so column drops never orphan good peers.
+    keptPeers = workingPeers.filter((r) => !cellsFor(r, columns).includes(N_A));
     if (columns.length < 2 || keptPeers.length < 2) {
       console.warn(`Comp table for ${args.ticker}: no n/a-free shape found — skipped.`);
       return null;
@@ -499,9 +533,12 @@ export async function buildCompTable(args: {
         .slice(0, 3)
         .join(" ")
         .replace(/[,.]$/, "");
+    // finishSentence repairs rationales the old hard slice cached mid-word
+    // ("nurture-and-") — peer_groups rows live 183 days, so print-time is the
+    // only place that reliably covers the backlog.
     const rationales = keptPeers
-      .filter((r) => r.rationale)
-      .map((r) => `${rationaleLabel(r.name)}: ${r.rationale}`);
+      .filter((r): r is typeof r & { rationale: string } => Boolean(r.rationale))
+      .map((r) => `${rationaleLabel(r.name)}: ${finishSentence(r.rationale)}`);
 
     // Anchor note for the writer: the multiples it may cite for re-rating.
     // Structural anchors exist only for stage-rule groups; everywhere else the

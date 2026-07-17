@@ -1,1011 +1,1024 @@
 {
-  "_about": {
-    "name": "comp-metrics-by-industry",
-    "version": "1.0",
-    "date": "2026-07-09",
-    "purpose": "One-time sector reasoning for the one-pager comp table (Valuation vs Peers). The engine LOOKS UP the metric set instead of re-deriving it per idea, so two miner one-pagers a month apart show the same columns.",
-    "taxonomy_source": "FMP /stable/available-industries (159 industries) and /stable/available-sectors (11 sectors), pulled 2026-07-09. Every industry string is mapped explicitly.",
-    "scope": "v1 covers comp-table columns only. The same groups can later drive the page-1 stat strip and full-report appendix tables.",
-    "how_to_resolve": [
-      "1. Look up the subject company's FMP profile.industry in industry_to_group (exact string match).",
-      "2. If the industry is missing or empty, fall back to sector_fallback[profile.sector].",
-      "3. If neither resolves, use default_group, and log the unmapped industry string so the file can be extended.",
-      "4. Peers inherit the SUBJECT's group so every row shows the same columns."
-    ],
-    "universal_rules": [
-      "Rows: company name plus ticker ('Caledonia Mining (CMCL.L)'); subject row bold with its actual name, never '(this name)'. Truncate long names, never tickers.",
-      "Computed metrics: identical formula for subject and peers, from the same data snapshot, priced at the same day's close. Never mix price epochs on one page.",
-      "Filing facts: from company releases, guidance preferred and labeled; print 'n/a' when not found. Never guess, never backfill from a different period silently.",
-      "sourced_only metrics: include the column only when a real source exists for every row that shows a value.",
-      "Stage tags: every peer gets a short stage/product tag (producer, ramp-up, developer, gold+copper...). Earnings multiples of ramp-ups and developers print 'n/m'.",
-      "Prose anchors: when the memo cites a peer multiple range for re-rating, use only peers that pass the group's clean_comp_rule.",
-      "Aim for 4-6 columns; if the layout gets tight, remove columns in drop_first_if_tight order.",
-      "Currency hygiene: label currency per row if peers report in different currencies; on UK names, GBp is pence and GBP is pounds -- market caps are GBP, prices are usually GBp."
-    ],
-    "example_lookup": "Thor Explorations: profile.industry='Gold' -> miners_precious -> columns: Prod (koz), AISC ($/oz), P/E, EV/EBITDA, FCF Yield, Div Yield; peers tagged producer/ramp-up/gold+copper; re-rating range from producing gold comps only."
+ "_about": {
+  "name": "comp-metrics-by-industry",
+  "version": "1.0",
+  "date": "2026-07-09",
+  "purpose": "One-time sector reasoning for the one-pager comp table (Valuation vs Peers). The engine LOOKS UP the metric set instead of re-deriving it per idea, so two miner one-pagers a month apart show the same columns.",
+  "taxonomy_source": "FMP /stable/available-industries (159 industries) and /stable/available-sectors (11 sectors), pulled 2026-07-09. Every industry string is mapped explicitly.",
+  "scope": "v1 covers comp-table columns only. The same groups can later drive the page-1 stat strip and full-report appendix tables.",
+  "how_to_resolve": [
+   "1. Look up the subject company's FMP profile.industry in industry_to_group (exact string match).",
+   "2. If the industry is missing or empty, fall back to sector_fallback[profile.sector].",
+   "3. If neither resolves, use default_group, and log the unmapped industry string so the file can be extended.",
+   "4. Peers inherit the SUBJECT's group so every row shows the same columns."
+  ],
+  "universal_rules": [
+   "Rows: company name plus ticker ('Caledonia Mining (CMCL.L)'); subject row bold with its actual name, never '(this name)'. Truncate long names, never tickers.",
+   "Computed metrics: identical formula for subject and peers, from the same data snapshot, priced at the same day's close. Never mix price epochs on one page.",
+   "Filing facts: from company releases, guidance preferred and labeled; print 'n/a' when not found. Never guess, never backfill from a different period silently.",
+   "sourced_only metrics: include the column only when a real source exists for every row that shows a value.",
+   "Stage tags: every peer gets a short stage/product tag (producer, ramp-up, developer, gold+copper...). Earnings multiples of ramp-ups and developers print 'n/m'.",
+   "Prose anchors: when the memo cites a peer multiple range for re-rating, use only peers that pass the group's clean_comp_rule.",
+   "Aim for 4-6 columns; if the layout gets tight, remove columns in drop_first_if_tight order.",
+   "Currency hygiene: label currency per row if peers report in different currencies; on UK names, GBp is pence and GBP is pounds -- market caps are GBP, prices are usually GBp."
+  ],
+  "example_lookup": "Thor Explorations: profile.industry='Gold' -> miners_precious -> columns: Prod (koz), AISC ($/oz), P/E, EV/EBITDA, FCF Yield, Div Yield; peers tagged producer/ramp-up/gold+copper; re-rating range from producing gold comps only."
+ },
+ "metrics": {
+  "pe": {
+   "label": "P/E",
+   "kind": "computed",
+   "how": "price / diluted EPS (TTM)",
+   "rule": "n/m if EPS <= 0"
   },
-  "metrics": {
-    "pe": {
-      "label": "P/E",
-      "kind": "computed",
-      "how": "price / diluted EPS (TTM)",
-      "rule": "n/m if EPS <= 0"
-    },
-    "ev_ebitda": {
-      "label": "EV/EBITDA",
-      "kind": "computed",
-      "how": "(market cap + total debt - cash) / EBITDA (TTM)",
-      "rule": "n/m if EBITDA <= 0; never show for banks or insurance carriers"
-    },
-    "ev_ebit": {
-      "label": "EV/EBIT",
-      "kind": "computed",
-      "how": "enterprise value / EBIT (TTM)",
-      "rule": "n/m if EBIT <= 0"
-    },
-    "p_tbv": {
-      "label": "P/TBV",
-      "kind": "computed",
-      "how": "market cap / (common equity - goodwill - other intangibles)",
-      "rule": "print 'neg' if tangible equity <= 0; P/TBV can never be below P/B"
-    },
-    "p_b": {
-      "label": "P/B",
-      "kind": "computed",
-      "how": "market cap / common equity",
-      "rule": ""
-    },
-    "p_s": {
-      "label": "P/S",
-      "kind": "computed",
-      "how": "market cap / revenue (TTM)",
-      "rule": "n/m if revenue is de-minimis (pre-revenue and ramp-up names)"
-    },
-    "ev_s": {
-      "label": "EV/S",
-      "kind": "computed",
-      "how": "enterprise value / revenue (TTM)",
-      "rule": "always pair with rev_growth_3y; one without the other misleads"
-    },
-    "fcf_yield": {
-      "label": "FCF Yield",
-      "kind": "computed",
-      "how": "(operating cash flow - capex, TTM) / market cap",
-      "rule": "sanity: FCF above EBITDA is almost always a data error"
-    },
-    "div_yield": {
-      "label": "Div Yield",
-      "kind": "computed",
-      "how": "indicated regular annual DPS / price at the day's close",
-      "rule": "specials and one-off bonuses shown separately or footnoted, never blended silently; if only TTM total is available, label it 'TTM incl. specials'"
-    },
-    "rev_growth_3y": {
-      "label": "Rev Growth (3Y)",
-      "kind": "computed",
-      "how": "3-year revenue CAGR (YoY if under 3 years of history, labeled)",
-      "rule": ""
-    },
-    "roe": {
-      "label": "ROE",
-      "kind": "computed",
-      "how": "net income (TTM) / average common equity",
-      "rule": ""
-    },
-    "rote": {
-      "label": "RoTE",
-      "kind": "computed",
-      "how": "net income (TTM) / average tangible common equity",
-      "rule": ""
-    },
-    "nd_ebitda": {
-      "label": "Net Debt/EBITDA",
-      "kind": "computed",
-      "how": "(total debt - cash) / EBITDA (TTM); include leases where reported",
-      "rule": "print 'net cash' when negative"
-    },
-    "net_cash": {
-      "label": "Net Cash",
-      "kind": "computed",
-      "how": "cash + liquid investments - total debt, absolute currency",
-      "rule": ""
-    },
-    "p_ffo": {
-      "label": "P/FFO",
-      "kind": "hybrid",
-      "how": "price / FFO per share; use company-reported FFO when available, else approximate NI + D&A - gains on property sales and label 'approx'",
-      "rule": "n/a if neither is computable"
-    },
-    "ltv": {
-      "label": "LTV",
-      "kind": "computed",
-      "how": "net debt / gross real estate assets (approximation of loan-to-value)",
-      "rule": "label 'approx' unless company-reported"
-    },
-    "prod_koz": {
-      "label": "Prod (koz)",
-      "kind": "filing",
-      "how": "gold/PM production in koz; current-year guidance preferred, else latest FY actual, labeled",
-      "rule": "n/a if not disclosed"
-    },
-    "aisc_oz": {
-      "label": "AISC ($/oz)",
-      "kind": "filing",
-      "how": "all-in sustaining cost per ounce; guidance preferred, labeled",
-      "rule": "n/a if not disclosed"
-    },
-    "prod_units": {
-      "label": "Production",
-      "kind": "filing",
-      "how": "production in the commodity's native units (kt Cu, Mlbs U3O8, Mt coal...)",
-      "rule": "n/a if not disclosed"
-    },
-    "unit_cash_cost": {
-      "label": "Cash Cost",
-      "kind": "filing",
-      "how": "cash cost per native production unit",
-      "rule": "n/a if not disclosed"
-    },
-    "prod_boed": {
-      "label": "Prod (boe/d)",
-      "kind": "filing",
-      "how": "oil & gas production, boe/d, with liquids share if disclosed",
-      "rule": "n/a if not disclosed"
-    },
-    "netback_boe": {
-      "label": "Netback ($/boe)",
-      "kind": "filing",
-      "how": "operating netback per boe from company reporting",
-      "rule": "n/a if not disclosed"
-    },
-    "cet1": {
-      "label": "CET1",
-      "kind": "filing",
-      "how": "common equity tier 1 ratio from regulatory reporting",
-      "rule": "n/a if not disclosed"
-    },
-    "combined_ratio": {
-      "label": "Combined Ratio",
-      "kind": "filing",
-      "how": "P&C/reinsurance combined ratio from company reporting",
-      "rule": "n/a for life insurers and where not disclosed"
-    },
-    "backlog": {
-      "label": "Backlog",
-      "kind": "filing",
-      "how": "order backlog or book-to-bill from company reporting",
-      "rule": "optional column; n/a if not disclosed"
-    },
-    "aum": {
-      "label": "AUM / Flows",
-      "kind": "filing",
-      "how": "assets under management and latest net flows",
-      "rule": "n/a if not disclosed"
-    },
-    "runway_quarters": {
-      "label": "Cash Runway",
-      "kind": "filing",
-      "how": "quarters of cash at current operating burn, from company statements if given, else computed from net cash / quarterly burn and labeled 'approx'",
-      "rule": "n/a if burn not derivable"
-    },
-    "p_nav": {
-      "label": "P/NAV",
-      "kind": "sourced_only",
-      "how": "price / net asset value ONLY from a company-stated or published consensus NAV",
-      "rule": "omit the column entirely if no source; never estimate NAV"
-    },
-    "ev_resource_oz": {
-      "label": "EV/oz",
-      "kind": "sourced_only",
-      "how": "enterprise value / total resource ounces from the company's compliant resource statement (43-101/JORC)",
-      "rule": "omit if no current resource statement"
-    }
+  "ev_ebitda": {
+   "label": "EV/EBITDA",
+   "kind": "computed",
+   "how": "(market cap + total debt - cash) / EBITDA (TTM)",
+   "rule": "n/m if EBITDA <= 0; never show for banks or insurance carriers"
   },
-  "groups": {
-    "miners_precious": {
-      "label": "Precious metals miners",
-      "columns": [
-        "prod_koz",
-        "aisc_oz",
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "div_yield"
-      ],
-      "drop_first_if_tight": [
-        "div_yield",
-        "fcf_yield"
-      ],
-      "optional_if_sourced": [
-        "p_nav",
-        "ev_resource_oz"
-      ],
-      "stage_rule": "Tag each row producer / ramp-up / developer. Ramp-up = first production within the last 4 quarters or revenue still immaterial; developer = no production. Print n/m for earnings multiples of ramp-ups and developers; for developers the relevant line is EV vs net cash and project NPV (sourced).",
-      "clean_comp_rule": "Clean anchors share primary metal AND producing stage. A gold+copper transition name or a ramp-up does not anchor a re-rating range.",
-      "pitfalls": "P/B is historical capex and impairments, P/S ignores the cost curve entirely; both carry almost no information here. A developer in a producer table shows meaningless P/S (e.g. 48.6x) and dashes."
-    },
-    "miners_base_bulk": {
-      "label": "Base metals, uranium, coal and bulk miners",
-      "columns": [
-        "prod_units",
-        "unit_cash_cost",
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda",
-        "pe"
-      ],
-      "drop_first_if_tight": [
-        "pe",
-        "unit_cash_cost"
-      ],
-      "optional_if_sourced": [
-        "p_nav"
-      ],
-      "stage_rule": "Same producer / ramp-up / developer tagging as precious metals; n/m multiples for non-producers.",
-      "clean_comp_rule": "Match primary commodity first; a copper name is not a coal comp even if both sit in one screen bucket.",
-      "pitfalls": "Cyclical earnings make spot P/E unreliable at both extremes; state where in the price cycle the multiple is measured."
-    },
-    "steel": {
-      "label": "Steel producers",
-      "columns": [
-        "ev_ebitda",
-        "p_tbv",
-        "fcf_yield",
-        "nd_ebitda",
-        "pe"
-      ],
-      "drop_first_if_tight": [
-        "pe"
-      ],
-      "clean_comp_rule": "Match route (EAF vs blast furnace) and region where possible; note import exposure.",
-      "pitfalls": "Deep cyclical: trough P/E looks expensive and peak P/E looks cheap; P/TBV and mid-cycle EV/EBITDA carry the signal."
-    },
-    "materials_processing": {
-      "label": "Chemicals, paper, packaging, construction materials and other processed materials",
-      "columns": [
-        "ev_ebitda",
-        "ev_ebit",
-        "fcf_yield",
-        "nd_ebitda",
-        "pe"
-      ],
-      "drop_first_if_tight": [
-        "ev_ebit"
-      ],
-      "clean_comp_rule": "Match sub-vertical (specialty vs commodity chemistry, containerboard vs printing paper); commodity and specialty names deserve different multiples.",
-      "pitfalls": "Commodity-price pass-through distorts single-year margins; prefer mid-cycle framing in prose."
-    },
-    "agri_commodity": {
-      "label": "Farm products, agricultural commodities and milling",
-      "columns": [
-        "p_tbv",
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda",
-        "pe"
-      ],
-      "drop_first_if_tight": [
-        "pe"
-      ],
-      "clean_comp_rule": "Match crop/protein exposure and degree of vertical integration.",
-      "pitfalls": "Thin, volatile commodity margins; balance sheet (land, biological assets) often matters more than the income statement."
-    },
-    "oil_gas_ep": {
-      "label": "Oil & gas exploration and production",
-      "columns": [
-        "prod_boed",
-        "netback_boe",
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda",
-        "p_tbv"
-      ],
-      "drop_first_if_tight": [
-        "p_tbv",
-        "netback_boe"
-      ],
-      "stage_rule": "Tag producer / development-stage. Pre-production names get n/m multiples; the story is EV vs 2P reserves and funding.",
-      "clean_comp_rule": "Match liquids vs gas weighting and basin/jurisdiction; a gassy producer is not an oily comp.",
-      "pitfalls": "P/E distorted by DD&A, impairments and hedge accounting. Reserves (2P, PV-10) belong in the appendix, not guessed into the table."
-    },
-    "oil_gas_integrated": {
-      "label": "Integrated oil & gas",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "div_yield",
-        "nd_ebitda"
-      ],
-      "drop_first_if_tight": [
-        "nd_ebitda"
-      ],
-      "clean_comp_rule": "Compare integrateds with integrateds; upstream pure-plays distort the range.",
-      "pitfalls": "Downstream/chemicals segments mask upstream economics; note segment mix when the gap is large."
-    },
-    "oil_gas_midstream": {
-      "label": "Midstream / pipelines",
-      "columns": [
-        "ev_ebitda",
-        "fcf_yield",
-        "div_yield",
-        "nd_ebitda"
-      ],
-      "drop_first_if_tight": [
-        "fcf_yield"
-      ],
-      "clean_comp_rule": "Match contract profile (fee-based vs commodity-exposed) and leverage.",
-      "pitfalls": "Distribution coverage and contracted cash flows matter more than P/E; if distributable cash flow is reported, cite it from filings."
-    },
-    "oil_gas_refining": {
-      "label": "Refining & marketing",
-      "columns": [
-        "ev_ebitda",
-        "fcf_yield",
-        "p_tbv",
-        "nd_ebitda",
-        "pe"
-      ],
-      "drop_first_if_tight": [
-        "pe"
-      ],
-      "clean_comp_rule": "Match refining complexity and region; marketing-heavy names are different animals.",
-      "pitfalls": "Crack-spread cyclicality: single-year multiples mislead in both directions; say where spreads are vs history."
-    },
-    "oil_gas_services": {
-      "label": "Oilfield services & drilling",
-      "columns": [
-        "ev_ebitda",
-        "fcf_yield",
-        "p_tbv",
-        "nd_ebitda",
-        "backlog"
-      ],
-      "drop_first_if_tight": [
-        "backlog"
-      ],
-      "clean_comp_rule": "Match service line and fleet type (onshore vs offshore); day-rate cycles differ.",
-      "pitfalls": "Asset values swing with activity; P/TBV plus backlog beats earnings multiples at cycle turns."
-    },
-    "banks": {
-      "label": "Banks",
-      "columns": [
-        "p_tbv",
-        "rote",
-        "pe",
-        "div_yield",
-        "cet1"
-      ],
-      "drop_first_if_tight": [
-        "div_yield"
-      ],
-      "clean_comp_rule": "Match geography and model (retail/commercial vs universal/IB-heavy); cross-border P/TBV gaps often reflect structural RoTE and rates, name that in prose.",
-      "pitfalls": "EV, EBITDA, P/S and FCF yield are meaningless for banks; never show them. P/TBV must be read against RoTE: cheap on book with single-digit RoTE may be fairly priced."
-    },
-    "insurance_carriers": {
-      "label": "Insurance carriers (life, P&C, specialty, reinsurance)",
-      "columns": [
-        "p_tbv",
-        "roe",
-        "pe",
-        "div_yield",
-        "combined_ratio"
-      ],
-      "drop_first_if_tight": [
-        "div_yield"
-      ],
-      "clean_comp_rule": "Match line of business: life vs P&C vs reinsurance are not comps for each other; combined ratio applies to P&C/re only.",
-      "pitfalls": "EV/EBITDA meaningless; book value quality (reserve adequacy) is the real question and belongs in prose."
-    },
-    "asset_managers": {
-      "label": "Asset managers",
-      "columns": [
-        "pe",
-        "fcf_yield",
-        "div_yield",
-        "aum"
-      ],
-      "drop_first_if_tight": [
-        "aum"
-      ],
-      "clean_comp_rule": "Match asset class mix and fee model (traditional vs alternatives vs passive).",
-      "pitfalls": "Watch the classification: on non-US exchanges FMP often labels closed-end funds and investment trusts 'Asset Management'. A fund is not an operating company; compare it on discount to NAV or exclude it from the idea universe."
-    },
-    "exchanges_data": {
-      "label": "Exchanges and financial data",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "rev_growth_3y"
-      ],
-      "drop_first_if_tight": [
-        "rev_growth_3y"
-      ],
-      "clean_comp_rule": "Match revenue mix (transaction vs recurring data/index fees).",
-      "pitfalls": "Structurally high multiples; a 'cheap' exchange usually has a volume or regulatory story, name it."
-    },
-    "capital_markets_ib": {
-      "label": "Investment banks and capital-markets firms",
-      "columns": [
-        "p_tbv",
-        "rote",
-        "pe",
-        "div_yield"
-      ],
-      "drop_first_if_tight": [
-        "div_yield"
-      ],
-      "clean_comp_rule": "Match business mix (advisory-heavy vs trading/balance-sheet-heavy).",
-      "pitfalls": "Earnings are cyclical and comp-driven; tangible book plus through-cycle RoTE is the anchor."
-    },
-    "specialty_finance_credit": {
-      "label": "Consumer credit, specialty finance and mortgage finance",
-      "columns": [
-        "p_tbv",
-        "rote",
-        "pe",
-        "div_yield"
-      ],
-      "drop_first_if_tight": [
-        "div_yield"
-      ],
-      "clean_comp_rule": "Match asset class (cards vs auto vs mortgage) and funding model (deposit vs wholesale).",
-      "pitfalls": "Credit costs lag the cycle; cheap P/E late-cycle is a warning, not a bargain. Charge-off and provisioning trends belong in prose from filings."
-    },
-    "financial_other": {
-      "label": "Diversified financials, financial conglomerates, shells",
-      "columns": [
-        "p_tbv",
-        "pe",
-        "div_yield"
-      ],
-      "drop_first_if_tight": [
-        "div_yield"
-      ],
-      "clean_comp_rule": "Usually SOTP situations; comp each segment against its own peer set rather than the conglomerate against anything.",
-      "pitfalls": "Shell companies (SPACs) should normally be excluded from the idea universe, not comped."
-    },
-    "reits_equity": {
-      "label": "Equity REITs (all property types)",
-      "columns": [
-        "p_ffo",
-        "div_yield",
-        "ltv",
-        "p_tbv"
-      ],
-      "drop_first_if_tight": [
-        "p_tbv"
-      ],
-      "optional_if_sourced": [
-        "p_nav"
-      ],
-      "clean_comp_rule": "Match property type first (industrial vs office vs retail vs healthcare); cap-rate environments differ by type.",
-      "pitfalls": "P/E is meaningless for REITs because depreciation swamps it; FFO is the earnings line. P/TBV only proxies NAV where assets are carried near market (IFRS names), label accordingly."
-    },
-    "reits_mortgage": {
-      "label": "Mortgage REITs",
-      "columns": [
-        "p_tbv",
-        "div_yield",
-        "rote"
-      ],
-      "drop_first_if_tight": [
-        "rote"
-      ],
-      "clean_comp_rule": "Match book (agency vs credit) and leverage.",
-      "pitfalls": "Book value marks move with rates; trailing yield says little about forward earnings power."
-    },
-    "real_estate_ops": {
-      "label": "Real estate operators and developers (non-REIT)",
-      "columns": [
-        "p_tbv",
-        "ltv",
-        "pe",
-        "fcf_yield"
-      ],
-      "drop_first_if_tight": [
-        "fcf_yield"
-      ],
-      "optional_if_sourced": [
-        "p_nav"
-      ],
-      "clean_comp_rule": "Separate rent-collectors from developers; development earnings are lumpy and deserve lower multiples.",
-      "pitfalls": "Carrying values vary by accounting regime (historical cost vs fair value); say which basis P/TBV is on."
-    },
-    "software": {
-      "label": "Software, internet content, gaming",
-      "columns": [
-        "ev_s",
-        "rev_growth_3y",
-        "ev_ebitda",
-        "fcf_yield",
-        "pe"
-      ],
-      "drop_first_if_tight": [
-        "pe"
-      ],
-      "clean_comp_rule": "Match growth band and model (subscription vs license vs ad-funded); EV/S without the growth column is banned.",
-      "pitfalls": "Unprofitable names show n/m P/E; that is information, not a gap. Stock comp can make FCF flatter than economics."
-    },
-    "semis": {
-      "label": "Semiconductors and semi equipment",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "rev_growth_3y",
-        "nd_ebitda"
-      ],
-      "drop_first_if_tight": [
-        "nd_ebitda"
-      ],
-      "clean_comp_rule": "Match position (fabless vs IDM vs equipment) and end-market exposure.",
-      "pitfalls": "Deep cyclicality: state where the cycle sits when quoting the multiple; trough earnings inflate P/E exactly when the stock is cheapest."
-    },
-    "tech_hardware": {
-      "label": "Hardware, electronics, communication equipment",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda",
-        "p_tbv"
-      ],
-      "drop_first_if_tight": [
-        "p_tbv"
-      ],
-      "clean_comp_rule": "Match product cycle exposure and customer concentration.",
-      "pitfalls": "Inventory cycles distort single quarters; check working-capital swings behind FCF."
-    },
-    "telecom": {
-      "label": "Telecom operators",
-      "columns": [
-        "ev_ebitda",
-        "fcf_yield",
-        "div_yield",
-        "nd_ebitda"
-      ],
-      "drop_first_if_tight": [
-        "div_yield"
-      ],
-      "clean_comp_rule": "Match infrastructure ownership (network owner vs MVNO) and geography.",
-      "pitfalls": "Capex intensity differs by build cycle; EBITDA alone overstates comparability, FCF yield corrects it."
-    },
-    "media": {
-      "label": "Media, broadcasting, publishing, entertainment",
-      "columns": [
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda",
-        "pe"
-      ],
-      "drop_first_if_tight": [
-        "pe"
-      ],
-      "clean_comp_rule": "Match revenue model (advertising vs subscription vs content licensing); ad-cyclicals and subscription names are different comps.",
-      "pitfalls": "Structural decline in legacy formats can make optically cheap multiples a value trap; the prose must say which side of that line the name is on."
-    },
-    "pharma": {
-      "label": "Pharmaceutical manufacturers",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "div_yield"
-      ],
-      "drop_first_if_tight": [
-        "div_yield"
-      ],
-      "clean_comp_rule": "Match scale and patent-cliff exposure; generics and originators are separate comp sets.",
-      "pitfalls": "Pipeline value and patent expiries live outside the multiples; flag the next major expiry in prose from filings."
-    },
-    "biotech": {
-      "label": "Biotechnology (mostly pre-profit)",
-      "columns": [
-        "net_cash",
-        "runway_quarters",
-        "ev_s",
-        "rev_growth_3y"
-      ],
-      "drop_first_if_tight": [
-        "rev_growth_3y"
-      ],
-      "stage_rule": "Pre-revenue: all earnings multiples n/m; the table is EV vs net cash and runway. Commercial-stage: add ev_s and growth.",
-      "clean_comp_rule": "Comp by stage and modality only with real caution; most biotech 'comps' are decorative.",
-      "pitfalls": "A biotech trading below net cash is a real screen hit; everything else about the valuation lives in the science, which no multiple captures."
-    },
-    "medtech_healthcare": {
-      "label": "Medical devices, instruments, diagnostics, specialties",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "rev_growth_3y"
-      ],
-      "drop_first_if_tight": [
-        "rev_growth_3y"
-      ],
-      "clean_comp_rule": "Match regulatory moat and recurring-revenue share (consumables vs capital equipment).",
-      "pitfalls": "Capital-equipment names are cyclical against hospital budgets; consumables deserve the premium."
-    },
-    "healthcare_providers_plans": {
-      "label": "Care facilities and healthcare plans",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda"
-      ],
-      "drop_first_if_tight": [
-        "nd_ebitda"
-      ],
-      "clean_comp_rule": "Plans comp with plans (medical-loss ratio from filings), facilities with facilities (lease-adjusted leverage).",
-      "pitfalls": "Reimbursement policy risk dominates; leases make facility leverage look lighter than it is."
-    },
-    "retail_distribution": {
-      "label": "Retail and distribution (all verticals)",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda"
-      ],
-      "drop_first_if_tight": [
-        "nd_ebitda"
-      ],
-      "clean_comp_rule": "Match vertical and format (grocer with grocer, distributor with distributor); online/offline mix noted.",
-      "pitfalls": "Leases: use lease-including leverage or say you have not. Same-store sales from filings beat any multiple for direction. Thin-margin distributors: P/S is nearly useless, working capital is the business."
-    },
-    "consumer_brands": {
-      "label": "Consumer brands (food, beverage, household, apparel brands, luxury, tobacco)",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "div_yield"
-      ],
-      "drop_first_if_tight": [
-        "div_yield"
-      ],
-      "clean_comp_rule": "Match category and brand strength; private-label-exposed names are not brand comps.",
-      "pitfalls": "Volume vs price mix behind revenue growth matters; a 'cheap' brand losing volume is melting."
-    },
-    "restaurants_leisure": {
-      "label": "Restaurants, leisure, gaming, lodging, travel",
-      "columns": [
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda",
-        "pe"
-      ],
-      "drop_first_if_tight": [
-        "pe"
-      ],
-      "clean_comp_rule": "Match asset model (franchised vs owned; asset-light vs property-heavy casinos/hotels).",
-      "pitfalls": "Leases and whole-business EBITDA hide obligations; franchise systems and owner-operators deserve different multiples."
-    },
-    "autos": {
-      "label": "Auto manufacturers, parts, recreational vehicles",
-      "columns": [
-        "pe",
-        "ev_ebit",
-        "p_tbv",
-        "div_yield",
-        "nd_ebitda"
-      ],
-      "drop_first_if_tight": [
-        "nd_ebitda"
-      ],
-      "clean_comp_rule": "OEMs with OEMs, suppliers with suppliers; premium vs volume OEMs noted.",
-      "pitfalls": "Captive finance arms distort EV and leverage; use industrial net cash/debt ex-financial-services where disclosed (filing fact), and say so."
-    },
-    "homebuilders": {
-      "label": "Homebuilders and residential construction",
-      "columns": [
-        "p_tbv",
-        "pe",
-        "nd_ebitda",
-        "fcf_yield"
-      ],
-      "drop_first_if_tight": [
-        "fcf_yield"
-      ],
-      "clean_comp_rule": "Match geography and price point; land-bank strategy (owned vs optioned) changes book quality.",
-      "pitfalls": "Book value is land and inventory: the cycle question is whether it is carried below or above market. Peak-cycle P/E always looks cheap."
-    },
-    "construction_engineering": {
-      "label": "E&C, construction, infrastructure operations",
-      "columns": [
-        "ev_ebitda",
-        "ev_ebit",
-        "fcf_yield",
-        "nd_ebitda",
-        "backlog"
-      ],
-      "drop_first_if_tight": [
-        "backlog"
-      ],
-      "clean_comp_rule": "Match contract type (fixed-price vs cost-plus) and end market.",
-      "pitfalls": "Percentage-of-completion accounting hides problem contracts; backlog quality beats backlog size."
-    },
-    "industrial_manufacturing": {
-      "label": "Machinery, capital goods, electrical equipment, A&D, conglomerates, rentals",
-      "columns": [
-        "pe",
-        "ev_ebit",
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda"
-      ],
-      "drop_first_if_tight": [
-        "ev_ebitda"
-      ],
-      "clean_comp_rule": "Match end market and cycle position; defense primes carry backlog (filing) as an optional column.",
-      "pitfalls": "Depreciation policies vary; EV/EBIT is the harder test than EV/EBITDA for asset-heavy names (and for equipment-rental fleets)."
-    },
-    "transport": {
-      "label": "Airlines, rail, trucking, freight & logistics",
-      "columns": [
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda",
-        "pe"
-      ],
-      "drop_first_if_tight": [
-        "pe"
-      ],
-      "clean_comp_rule": "Mode with mode: rail vs trucking vs airline economics are not comparable; airlines need lease-including EV.",
-      "pitfalls": "Fuel and rate cycles drive single-year numbers; operating ratio (filings) is the industry's own language for rail/trucking."
-    },
-    "shipping": {
-      "label": "Marine shipping",
-      "columns": [
-        "p_tbv",
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda",
-        "div_yield"
-      ],
-      "drop_first_if_tight": [
-        "div_yield"
-      ],
-      "optional_if_sourced": [
-        "p_nav"
-      ],
-      "clean_comp_rule": "Match vessel class (tanker vs dry bulk vs container vs LNG) and charter coverage (spot vs time-chartered).",
-      "pitfalls": "The real book is fleet market value: P/TBV against stated book differs from P/NAV against broker valuations; charter-rate cyclicality makes trailing multiples nearly meaningless at turns."
-    },
-    "waste_env": {
-      "label": "Waste and environmental services",
-      "columns": [
-        "ev_ebitda",
-        "fcf_yield",
-        "nd_ebitda",
-        "pe"
-      ],
-      "drop_first_if_tight": [
-        "pe"
-      ],
-      "clean_comp_rule": "Match route density/contract structure; hazardous vs solid waste differ.",
-      "pitfalls": "Landfill capex cycles depress FCF temporarily; distinguish growth from maintenance capex where disclosed."
-    },
-    "asset_light_services": {
-      "label": "Asset-light services (consulting, staffing, IT services, brokers, agencies, education)",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "fcf_yield",
-        "rev_growth_3y"
-      ],
-      "drop_first_if_tight": [
-        "rev_growth_3y"
-      ],
-      "clean_comp_rule": "Match service line and client cyclicality (staffing is early-cycle, consulting mid, audit stable).",
-      "pitfalls": "People walk out of the door; margin durability is culture, which no multiple shows. Working capital is the balance-sheet tell."
-    },
-    "utilities": {
-      "label": "Utilities (regulated, diversified, IPPs, renewables)",
-      "columns": [
-        "pe",
-        "div_yield",
-        "p_b",
-        "nd_ebitda"
-      ],
-      "drop_first_if_tight": [
-        "p_b"
-      ],
-      "clean_comp_rule": "Regulated with regulated (compare allowed-return regimes), merchant/IPP with merchant; renewables developers are a third bucket.",
-      "pitfalls": "Leverage is structural, not distress; the question is regulatory regime and rate-base growth (filings), not the raw multiple."
-    },
-    "general": {
-      "label": "Default when no industry mapping applies",
-      "columns": [
-        "pe",
-        "ev_ebitda",
-        "p_tbv",
-        "p_s",
-        "fcf_yield"
-      ],
-      "drop_first_if_tight": [
-        "p_s"
-      ],
-      "clean_comp_rule": "Same business model and size class; when in doubt, fewer but cleaner comps.",
-      "pitfalls": "If a name lands here, consider whether the industry mapping needs a new entry; log it rather than silently defaulting."
-    }
+  "ev_ebit": {
+   "label": "EV/EBIT",
+   "kind": "computed",
+   "how": "enterprise value / EBIT (TTM)",
+   "rule": "n/m if EBIT <= 0"
   },
-  "industry_to_group": {
-    "Steel": "steel",
-    "Silver": "miners_precious",
-    "Other Precious Metals": "miners_precious",
-    "Gold": "miners_precious",
-    "Copper": "miners_base_bulk",
-    "Aluminum": "miners_base_bulk",
-    "Paper, Lumber & Forest Products": "materials_processing",
-    "Industrial Materials": "materials_processing",
-    "Construction Materials": "materials_processing",
-    "Chemicals - Specialty": "materials_processing",
-    "Chemicals": "materials_processing",
-    "Agricultural Inputs": "materials_processing",
-    "Telecommunications Services": "telecom",
-    "Internet Content & Information": "software",
-    "Publishing": "media",
-    "Broadcasting": "media",
-    "Advertising Agencies": "asset_light_services",
-    "Entertainment": "media",
-    "Media & Entertainment": "media",
-    "Electronic Gaming & Multimedia": "software",
-    "Communication Equipment": "tech_hardware",
-    "Travel Lodging": "restaurants_leisure",
-    "Travel Services": "restaurants_leisure",
-    "Specialty Retail": "retail_distribution",
-    "Luxury Goods": "consumer_brands",
-    "Home Improvement": "retail_distribution",
-    "Residential Construction": "homebuilders",
-    "Department Stores": "retail_distribution",
-    "Personal Products & Services": "asset_light_services",
-    "Leisure": "restaurants_leisure",
-    "Gambling, Resorts & Casinos": "restaurants_leisure",
-    "Furnishings, Fixtures & Appliances": "consumer_brands",
-    "Restaurants": "restaurants_leisure",
-    "Auto - Parts": "autos",
-    "Auto - Manufacturers": "autos",
-    "Auto - Recreational Vehicles": "autos",
-    "Auto - Dealerships": "retail_distribution",
-    "Apparel - Retail": "retail_distribution",
-    "Apparel - Manufacturers": "consumer_brands",
-    "Apparel - Footwear & Accessories": "consumer_brands",
-    "Packaging & Containers": "materials_processing",
-    "Education & Training Services": "asset_light_services",
-    "Tobacco": "consumer_brands",
-    "Grocery Stores": "retail_distribution",
-    "Discount Stores": "retail_distribution",
-    "Household & Personal Products": "consumer_brands",
-    "Packaged Foods": "consumer_brands",
-    "Food Distribution": "retail_distribution",
-    "Food Confectioners": "consumer_brands",
-    "Agricultural Farm Products": "agri_commodity",
-    "Beverages - Wineries & Distilleries": "consumer_brands",
-    "Beverages - Non-Alcoholic": "consumer_brands",
-    "Beverages - Alcoholic": "consumer_brands",
-    "Uranium": "miners_base_bulk",
-    "Solar": "industrial_manufacturing",
-    "Oil & Gas Refining & Marketing": "oil_gas_refining",
-    "Oil & Gas Midstream": "oil_gas_midstream",
-    "Oil & Gas Integrated": "oil_gas_integrated",
-    "Oil & Gas Exploration & Production": "oil_gas_ep",
-    "Oil & Gas Equipment & Services": "oil_gas_services",
-    "Oil & Gas Energy": "oil_gas_ep",
-    "Oil & Gas Drilling": "oil_gas_services",
-    "Coal": "miners_base_bulk",
-    "Shell Companies": "financial_other",
-    "Investment - Banking & Investment Services": "capital_markets_ib",
-    "Insurance - Specialty": "insurance_carriers",
-    "Insurance - Reinsurance": "insurance_carriers",
-    "Insurance - Property & Casualty": "insurance_carriers",
-    "Insurance - Life": "insurance_carriers",
-    "Insurance - Diversified": "insurance_carriers",
-    "Insurance - Brokers": "asset_light_services",
-    "Financial - Mortgages": "specialty_finance_credit",
-    "Financial - Diversified": "financial_other",
-    "Financial - Data & Stock Exchanges": "exchanges_data",
-    "Financial - Credit Services": "specialty_finance_credit",
-    "Financial - Conglomerates": "financial_other",
-    "Financial - Capital Markets": "capital_markets_ib",
-    "Banks - Regional": "banks",
-    "Banks - Diversified": "banks",
-    "Banks": "banks",
-    "Asset Management": "asset_managers",
-    "Asset Management - Bonds": "asset_managers",
-    "Asset Management - Income": "asset_managers",
-    "Asset Management - Leveraged": "asset_managers",
-    "Asset Management - Cryptocurrency": "asset_managers",
-    "Asset Management - Global": "asset_managers",
-    "Medical - Specialties": "medtech_healthcare",
-    "Medical - Pharmaceuticals": "pharma",
-    "Medical - Instruments & Supplies": "medtech_healthcare",
-    "Medical - Healthcare Plans": "healthcare_providers_plans",
-    "Medical - Healthcare Information Services": "software",
-    "Medical - Equipment & Services": "medtech_healthcare",
-    "Medical - Distribution": "retail_distribution",
-    "Medical - Diagnostics & Research": "medtech_healthcare",
-    "Medical - Devices": "medtech_healthcare",
-    "Medical - Care Facilities": "healthcare_providers_plans",
-    "Drug Manufacturers - Specialty & Generic": "pharma",
-    "Drug Manufacturers - General": "pharma",
-    "Biotechnology": "biotech",
-    "Waste Management": "waste_env",
-    "Trucking": "transport",
-    "Railroads": "transport",
-    "Aerospace & Defense": "industrial_manufacturing",
-    "Marine Shipping": "shipping",
-    "Integrated Freight & Logistics": "transport",
-    "Airlines, Airports & Air Services": "transport",
-    "General Transportation": "transport",
-    "Manufacturing - Tools & Accessories": "industrial_manufacturing",
-    "Manufacturing - Textiles": "industrial_manufacturing",
-    "Manufacturing - Miscellaneous": "industrial_manufacturing",
-    "Manufacturing - Metal Fabrication": "industrial_manufacturing",
-    "Industrial - Distribution": "retail_distribution",
-    "Industrial - Specialties": "industrial_manufacturing",
-    "Industrial - Pollution & Treatment Controls": "waste_env",
-    "Environmental Services": "waste_env",
-    "Industrial - Machinery": "industrial_manufacturing",
-    "Industrial - Infrastructure Operations": "construction_engineering",
-    "Industrial - Capital Goods": "industrial_manufacturing",
-    "Consulting Services": "asset_light_services",
-    "Business Equipment & Supplies": "industrial_manufacturing",
-    "Staffing & Employment Services": "asset_light_services",
-    "Rental & Leasing Services": "industrial_manufacturing",
-    "Engineering & Construction": "construction_engineering",
-    "Security & Protection Services": "asset_light_services",
-    "Specialty Business Services": "asset_light_services",
-    "Construction": "construction_engineering",
-    "Conglomerates": "industrial_manufacturing",
-    "Electrical Equipment & Parts": "industrial_manufacturing",
-    "Agricultural - Machinery": "industrial_manufacturing",
-    "Agricultural - Commodities/Milling": "agri_commodity",
-    "REIT - Specialty": "reits_equity",
-    "REIT - Retail": "reits_equity",
-    "REIT - Residential": "reits_equity",
-    "REIT - Office": "reits_equity",
-    "REIT - Mortgage": "reits_mortgage",
-    "REIT - Industrial": "reits_equity",
-    "REIT - Hotel & Motel": "reits_equity",
-    "REIT - Healthcare Facilities": "reits_equity",
-    "REIT - Diversified": "reits_equity",
-    "Real Estate - Services": "asset_light_services",
-    "Real Estate - Diversified": "real_estate_ops",
-    "Real Estate - Development": "real_estate_ops",
-    "Real Estate - General": "real_estate_ops",
-    "Information Technology Services": "asset_light_services",
-    "Hardware, Equipment & Parts": "tech_hardware",
-    "Computer Hardware": "tech_hardware",
-    "Software - Services": "software",
-    "Software - Infrastructure": "software",
-    "Software - Application": "software",
-    "Semiconductors": "semis",
-    "Technology Distributors": "retail_distribution",
-    "Consumer Electronics": "tech_hardware",
-    "Renewable Utilities": "utilities",
-    "Regulated Water": "utilities",
-    "Regulated Gas": "utilities",
-    "Regulated Electric": "utilities",
-    "Independent Power Producers": "utilities",
-    "Diversified Utilities": "utilities",
-    "General Utilities": "utilities"
+  "p_tbv": {
+   "label": "P/TBV",
+   "kind": "computed",
+   "how": "market cap / (common equity - goodwill - other intangibles)",
+   "rule": "print 'neg' if tangible equity <= 0; P/TBV can never be below P/B"
   },
-  "sector_fallback": {
-    "Basic Materials": "materials_processing",
-    "Communication Services": "media",
-    "Consumer Cyclical": "retail_distribution",
-    "Consumer Defensive": "consumer_brands",
-    "Energy": "oil_gas_ep",
-    "Financial Services": "financial_other",
-    "Healthcare": "medtech_healthcare",
-    "Industrials": "industrial_manufacturing",
-    "Real Estate": "real_estate_ops",
-    "Technology": "general",
-    "Utilities": "utilities"
+  "p_b": {
+   "label": "P/B",
+   "kind": "computed",
+   "how": "market cap / common equity",
+   "rule": ""
   },
-  "default_group": "general"
+  "p_s": {
+   "label": "P/S",
+   "kind": "computed",
+   "how": "market cap / revenue (TTM)",
+   "rule": "n/m if revenue is de-minimis (pre-revenue and ramp-up names)"
+  },
+  "ev_s": {
+   "label": "EV/S",
+   "kind": "computed",
+   "how": "enterprise value / revenue (TTM)",
+   "rule": "always pair with rev_growth_3y; one without the other misleads"
+  },
+  "fcf_yield": {
+   "label": "FCF Yield",
+   "kind": "computed",
+   "how": "(operating cash flow - capex, TTM) / market cap",
+   "rule": "sanity: FCF above EBITDA is almost always a data error"
+  },
+  "div_yield": {
+   "label": "Div Yield",
+   "kind": "computed",
+   "how": "indicated regular annual DPS / price at the day's close",
+   "rule": "specials and one-off bonuses shown separately or footnoted, never blended silently; if only TTM total is available, label it 'TTM incl. specials'"
+  },
+  "rev_growth_3y": {
+   "label": "Rev Growth (3Y)",
+   "kind": "computed",
+   "how": "3-year revenue CAGR (YoY if under 3 years of history, labeled)",
+   "rule": ""
+  },
+  "roe": {
+   "label": "ROE",
+   "kind": "computed",
+   "how": "net income (TTM) / average common equity",
+   "rule": ""
+  },
+  "rote": {
+   "label": "RoTE",
+   "kind": "computed",
+   "how": "net income (TTM) / average tangible common equity",
+   "rule": ""
+  },
+  "nd_ebitda": {
+   "label": "Net Debt/EBITDA",
+   "kind": "computed",
+   "how": "(total debt - cash) / EBITDA (TTM); include leases where reported",
+   "rule": "print 'net cash' when negative"
+  },
+  "net_cash": {
+   "label": "Net Cash",
+   "kind": "computed",
+   "how": "cash + liquid investments - total debt, absolute currency",
+   "rule": ""
+  },
+  "p_ffo": {
+   "label": "P/FFO",
+   "kind": "hybrid",
+   "how": "price / FFO per share; use company-reported FFO when available, else approximate NI + D&A - gains on property sales and label 'approx'",
+   "rule": "n/a if neither is computable"
+  },
+  "ltv": {
+   "label": "LTV",
+   "kind": "computed",
+   "how": "net debt / gross real estate assets (approximation of loan-to-value)",
+   "rule": "label 'approx' unless company-reported"
+  },
+  "prod_koz": {
+   "label": "Prod (koz)",
+   "kind": "filing",
+   "how": "gold/PM production in koz; current-year guidance preferred, else latest FY actual, labeled",
+   "rule": "n/a if not disclosed"
+  },
+  "aisc_oz": {
+   "label": "AISC ($/oz)",
+   "kind": "filing",
+   "how": "all-in sustaining cost per ounce; guidance preferred, labeled",
+   "rule": "n/a if not disclosed"
+  },
+  "prod_units": {
+   "label": "Production",
+   "kind": "filing",
+   "how": "production in the commodity's native units (kt Cu, Mlbs U3O8, Mt coal...)",
+   "rule": "n/a if not disclosed"
+  },
+  "unit_cash_cost": {
+   "label": "Cash Cost",
+   "kind": "filing",
+   "how": "cash cost per native production unit",
+   "rule": "n/a if not disclosed"
+  },
+  "prod_boed": {
+   "label": "Prod (boe/d)",
+   "kind": "filing",
+   "how": "oil & gas production, boe/d, with liquids share if disclosed",
+   "rule": "n/a if not disclosed"
+  },
+  "netback_boe": {
+   "label": "Netback ($/boe)",
+   "kind": "filing",
+   "how": "operating netback per boe from company reporting",
+   "rule": "n/a if not disclosed"
+  },
+  "cet1": {
+   "label": "CET1",
+   "kind": "filing",
+   "how": "common equity tier 1 ratio from regulatory reporting",
+   "rule": "n/a if not disclosed"
+  },
+  "combined_ratio": {
+   "label": "Combined Ratio",
+   "kind": "filing",
+   "how": "P&C/reinsurance combined ratio from company reporting",
+   "rule": "n/a for life insurers and where not disclosed"
+  },
+  "backlog": {
+   "label": "Backlog",
+   "kind": "filing",
+   "how": "order backlog or book-to-bill from company reporting",
+   "rule": "optional column; n/a if not disclosed"
+  },
+  "aum": {
+   "label": "AUM / Flows",
+   "kind": "filing",
+   "how": "assets under management and latest net flows",
+   "rule": "n/a if not disclosed"
+  },
+  "runway_quarters": {
+   "label": "Cash Runway",
+   "kind": "filing",
+   "how": "quarters of cash at current operating burn, from company statements if given, else computed from net cash / quarterly burn and labeled 'approx'",
+   "rule": "n/a if burn not derivable"
+  },
+  "p_nav": {
+   "label": "P/NAV",
+   "kind": "sourced_only",
+   "how": "price / net asset value ONLY from a company-stated or published consensus NAV",
+   "rule": "omit the column entirely if no source; never estimate NAV"
+  },
+  "ev_resource_oz": {
+   "label": "EV/oz",
+   "kind": "sourced_only",
+   "how": "enterprise value / total resource ounces from the company's compliant resource statement (43-101/JORC)",
+   "rule": "omit if no current resource statement"
+  }
+ },
+ "groups": {
+  "miners_precious": {
+   "label": "Precious metals miners",
+   "columns": [
+    "prod_koz",
+    "aisc_oz",
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "div_yield"
+   ],
+   "drop_first_if_tight": [
+    "div_yield",
+    "fcf_yield"
+   ],
+   "optional_if_sourced": [
+    "p_nav",
+    "ev_resource_oz"
+   ],
+   "stage_rule": "Tag each row producer / ramp-up / developer. Ramp-up = first production within the last 4 quarters or revenue still immaterial; developer = no production. Print n/m for earnings multiples of ramp-ups and developers; for developers the relevant line is EV vs net cash and project NPV (sourced).",
+   "clean_comp_rule": "Clean anchors share primary metal AND producing stage. A gold+copper transition name or a ramp-up does not anchor a re-rating range.",
+   "pitfalls": "P/B is historical capex and impairments, P/S ignores the cost curve entirely; both carry almost no information here. A developer in a producer table shows meaningless P/S (e.g. 48.6x) and dashes."
+  },
+  "miners_base_bulk": {
+   "label": "Base metals, uranium, coal and bulk miners",
+   "columns": [
+    "prod_units",
+    "unit_cash_cost",
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda",
+    "pe"
+   ],
+   "drop_first_if_tight": [
+    "pe",
+    "unit_cash_cost"
+   ],
+   "optional_if_sourced": [
+    "p_nav"
+   ],
+   "stage_rule": "Same producer / ramp-up / developer tagging as precious metals; n/m multiples for non-producers.",
+   "clean_comp_rule": "Match primary commodity first; a copper name is not a coal comp even if both sit in one screen bucket.",
+   "pitfalls": "Cyclical earnings make spot P/E unreliable at both extremes; state where in the price cycle the multiple is measured."
+  },
+  "steel": {
+   "label": "Steel producers",
+   "columns": [
+    "ev_ebitda",
+    "p_tbv",
+    "fcf_yield",
+    "nd_ebitda",
+    "pe"
+   ],
+   "drop_first_if_tight": [
+    "pe"
+   ],
+   "clean_comp_rule": "Match route (EAF vs blast furnace) and region where possible; note import exposure.",
+   "pitfalls": "Deep cyclical: trough P/E looks expensive and peak P/E looks cheap; P/TBV and mid-cycle EV/EBITDA carry the signal."
+  },
+  "materials_processing": {
+   "label": "Chemicals, paper, packaging, construction materials and other processed materials",
+   "columns": [
+    "ev_ebitda",
+    "ev_ebit",
+    "fcf_yield",
+    "nd_ebitda",
+    "pe"
+   ],
+   "drop_first_if_tight": [
+    "ev_ebit"
+   ],
+   "clean_comp_rule": "Match sub-vertical (specialty vs commodity chemistry, containerboard vs printing paper); commodity and specialty names deserve different multiples.",
+   "pitfalls": "Commodity-price pass-through distorts single-year margins; prefer mid-cycle framing in prose."
+  },
+  "agri_commodity": {
+   "label": "Farm products, agricultural commodities and milling",
+   "columns": [
+    "p_tbv",
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda",
+    "pe"
+   ],
+   "drop_first_if_tight": [
+    "pe"
+   ],
+   "clean_comp_rule": "Match crop/protein exposure and degree of vertical integration.",
+   "pitfalls": "Thin, volatile commodity margins; balance sheet (land, biological assets) often matters more than the income statement."
+  },
+  "oil_gas_ep": {
+   "label": "Oil & gas exploration and production",
+   "columns": [
+    "prod_boed",
+    "netback_boe",
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda",
+    "p_tbv"
+   ],
+   "drop_first_if_tight": [
+    "p_tbv",
+    "netback_boe"
+   ],
+   "stage_rule": "Tag producer / development-stage. Pre-production names get n/m multiples; the story is EV vs 2P reserves and funding.",
+   "clean_comp_rule": "Match liquids vs gas weighting and basin/jurisdiction; a gassy producer is not an oily comp.",
+   "pitfalls": "P/E distorted by DD&A, impairments and hedge accounting. Reserves (2P, PV-10) belong in the appendix, not guessed into the table."
+  },
+  "oil_gas_integrated": {
+   "label": "Integrated oil & gas",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "div_yield",
+    "nd_ebitda"
+   ],
+   "drop_first_if_tight": [
+    "nd_ebitda"
+   ],
+   "clean_comp_rule": "Compare integrateds with integrateds; upstream pure-plays distort the range.",
+   "pitfalls": "Downstream/chemicals segments mask upstream economics; note segment mix when the gap is large."
+  },
+  "oil_gas_midstream": {
+   "label": "Midstream / pipelines",
+   "columns": [
+    "ev_ebitda",
+    "fcf_yield",
+    "div_yield",
+    "nd_ebitda"
+   ],
+   "drop_first_if_tight": [
+    "fcf_yield"
+   ],
+   "clean_comp_rule": "Match contract profile (fee-based vs commodity-exposed) and leverage.",
+   "pitfalls": "Distribution coverage and contracted cash flows matter more than P/E; if distributable cash flow is reported, cite it from filings."
+  },
+  "oil_gas_refining": {
+   "label": "Refining & marketing",
+   "columns": [
+    "ev_ebitda",
+    "fcf_yield",
+    "p_tbv",
+    "nd_ebitda",
+    "pe"
+   ],
+   "drop_first_if_tight": [
+    "pe"
+   ],
+   "clean_comp_rule": "Match refining complexity and region; marketing-heavy names are different animals.",
+   "pitfalls": "Crack-spread cyclicality: single-year multiples mislead in both directions; say where spreads are vs history."
+  },
+  "oil_gas_services": {
+   "label": "Oilfield services & drilling",
+   "columns": [
+    "ev_ebitda",
+    "fcf_yield",
+    "p_tbv",
+    "nd_ebitda",
+    "backlog"
+   ],
+   "drop_first_if_tight": [
+    "backlog"
+   ],
+   "clean_comp_rule": "Match service line and fleet type (onshore vs offshore); day-rate cycles differ.",
+   "pitfalls": "Asset values swing with activity; P/TBV plus backlog beats earnings multiples at cycle turns."
+  },
+  "banks": {
+   "label": "Banks",
+   "columns": [
+    "p_tbv",
+    "rote",
+    "pe",
+    "div_yield",
+    "cet1"
+   ],
+   "drop_first_if_tight": [
+    "div_yield"
+   ],
+   "clean_comp_rule": "Match geography and model (retail/commercial vs universal/IB-heavy); cross-border P/TBV gaps often reflect structural RoTE and rates, name that in prose.",
+   "pitfalls": "EV, EBITDA, P/S and FCF yield are meaningless for banks; never show them. P/TBV must be read against RoTE: cheap on book with single-digit RoTE may be fairly priced."
+  },
+  "insurance_carriers": {
+   "label": "Insurance carriers (life, P&C, specialty, reinsurance)",
+   "columns": [
+    "p_tbv",
+    "roe",
+    "pe",
+    "div_yield",
+    "combined_ratio"
+   ],
+   "drop_first_if_tight": [
+    "div_yield"
+   ],
+   "clean_comp_rule": "Match line of business: life vs P&C vs reinsurance are not comps for each other; combined ratio applies to P&C/re only.",
+   "pitfalls": "EV/EBITDA meaningless; book value quality (reserve adequacy) is the real question and belongs in prose."
+  },
+  "asset_managers": {
+   "label": "Asset managers",
+   "columns": [
+    "pe",
+    "fcf_yield",
+    "div_yield",
+    "aum"
+   ],
+   "drop_first_if_tight": [
+    "aum"
+   ],
+   "clean_comp_rule": "Match asset class mix and fee model (traditional vs alternatives vs passive).",
+   "pitfalls": "Watch the classification: on non-US exchanges FMP often labels closed-end funds and investment trusts 'Asset Management'. A fund is not an operating company; compare it on discount to NAV or exclude it from the idea universe."
+  },
+  "exchanges_data": {
+   "label": "Exchanges and financial data",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "rev_growth_3y"
+   ],
+   "drop_first_if_tight": [
+    "rev_growth_3y"
+   ],
+   "clean_comp_rule": "Match revenue mix (transaction vs recurring data/index fees).",
+   "pitfalls": "Structurally high multiples; a 'cheap' exchange usually has a volume or regulatory story, name it."
+  },
+  "capital_markets_ib": {
+   "label": "Investment banks and capital-markets firms",
+   "columns": [
+    "p_tbv",
+    "rote",
+    "pe",
+    "div_yield"
+   ],
+   "drop_first_if_tight": [
+    "div_yield"
+   ],
+   "clean_comp_rule": "Match business mix (advisory-heavy vs trading/balance-sheet-heavy).",
+   "pitfalls": "Earnings are cyclical and comp-driven; tangible book plus through-cycle RoTE is the anchor."
+  },
+  "specialty_finance_credit": {
+   "label": "Consumer credit, specialty finance and mortgage finance",
+   "columns": [
+    "p_tbv",
+    "rote",
+    "pe",
+    "div_yield"
+   ],
+   "drop_first_if_tight": [
+    "div_yield"
+   ],
+   "clean_comp_rule": "Match asset class (cards vs auto vs mortgage) and funding model (deposit vs wholesale).",
+   "pitfalls": "Credit costs lag the cycle; cheap P/E late-cycle is a warning, not a bargain. Charge-off and provisioning trends belong in prose from filings."
+  },
+  "financial_other": {
+   "label": "Diversified financials, financial conglomerates, shells",
+   "columns": [
+    "p_tbv",
+    "pe",
+    "div_yield"
+   ],
+   "drop_first_if_tight": [
+    "div_yield"
+   ],
+   "clean_comp_rule": "Usually SOTP situations; comp each segment against its own peer set rather than the conglomerate against anything.",
+   "pitfalls": "Shell companies (SPACs) should normally be excluded from the idea universe, not comped."
+  },
+  "reits_equity": {
+   "label": "Equity REITs (all property types)",
+   "columns": [
+    "p_ffo",
+    "div_yield",
+    "ltv",
+    "p_tbv"
+   ],
+   "drop_first_if_tight": [
+    "p_tbv"
+   ],
+   "optional_if_sourced": [
+    "p_nav"
+   ],
+   "clean_comp_rule": "Match property type first (industrial vs office vs retail vs healthcare); cap-rate environments differ by type.",
+   "pitfalls": "P/E is meaningless for REITs because depreciation swamps it; FFO is the earnings line. P/TBV only proxies NAV where assets are carried near market (IFRS names), label accordingly."
+  },
+  "reits_mortgage": {
+   "label": "Mortgage REITs",
+   "columns": [
+    "p_tbv",
+    "div_yield",
+    "rote"
+   ],
+   "drop_first_if_tight": [
+    "rote"
+   ],
+   "clean_comp_rule": "Match book (agency vs credit) and leverage.",
+   "pitfalls": "Book value marks move with rates; trailing yield says little about forward earnings power."
+  },
+  "real_estate_ops": {
+   "label": "Real estate operators and developers (non-REIT)",
+   "columns": [
+    "p_tbv",
+    "ltv",
+    "pe",
+    "fcf_yield"
+   ],
+   "drop_first_if_tight": [
+    "fcf_yield"
+   ],
+   "optional_if_sourced": [
+    "p_nav"
+   ],
+   "clean_comp_rule": "Separate rent-collectors from developers; development earnings are lumpy and deserve lower multiples.",
+   "pitfalls": "Carrying values vary by accounting regime (historical cost vs fair value); say which basis P/TBV is on."
+  },
+  "software": {
+   "label": "Software, internet content, gaming",
+   "columns": [
+    "ev_s",
+    "rev_growth_3y",
+    "ev_ebitda",
+    "fcf_yield",
+    "pe"
+   ],
+   "drop_first_if_tight": [
+    "pe"
+   ],
+   "clean_comp_rule": "Match growth band and model (subscription vs license vs ad-funded); EV/S without the growth column is banned.",
+   "pitfalls": "Unprofitable names show n/m P/E; that is information, not a gap. Stock comp can make FCF flatter than economics."
+  },
+  "semis": {
+   "label": "Semiconductors and semi equipment",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "rev_growth_3y",
+    "nd_ebitda"
+   ],
+   "drop_first_if_tight": [
+    "nd_ebitda"
+   ],
+   "clean_comp_rule": "Match position (fabless vs IDM vs equipment) and end-market exposure.",
+   "pitfalls": "Deep cyclicality: state where the cycle sits when quoting the multiple; trough earnings inflate P/E exactly when the stock is cheapest."
+  },
+  "tech_hardware": {
+   "label": "Hardware, electronics, communication equipment",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda",
+    "p_tbv"
+   ],
+   "drop_first_if_tight": [
+    "p_tbv"
+   ],
+   "clean_comp_rule": "Match product cycle exposure and customer concentration.",
+   "pitfalls": "Inventory cycles distort single quarters; check working-capital swings behind FCF."
+  },
+  "telecom": {
+   "label": "Telecom operators",
+   "columns": [
+    "ev_ebitda",
+    "fcf_yield",
+    "div_yield",
+    "nd_ebitda"
+   ],
+   "drop_first_if_tight": [
+    "div_yield"
+   ],
+   "clean_comp_rule": "Match infrastructure ownership (network owner vs MVNO) and geography.",
+   "pitfalls": "Capex intensity differs by build cycle; EBITDA alone overstates comparability, FCF yield corrects it."
+  },
+  "media": {
+   "label": "Media, broadcasting, publishing, entertainment",
+   "columns": [
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda",
+    "pe"
+   ],
+   "drop_first_if_tight": [
+    "pe"
+   ],
+   "clean_comp_rule": "Match revenue model (advertising vs subscription vs content licensing); ad-cyclicals and subscription names are different comps.",
+   "pitfalls": "Structural decline in legacy formats can make optically cheap multiples a value trap; the prose must say which side of that line the name is on."
+  },
+  "pharma": {
+   "label": "Pharmaceutical manufacturers",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "div_yield"
+   ],
+   "drop_first_if_tight": [
+    "div_yield"
+   ],
+   "clean_comp_rule": "Match scale and patent-cliff exposure; generics and originators are separate comp sets.",
+   "pitfalls": "Pipeline value and patent expiries live outside the multiples; flag the next major expiry in prose from filings."
+  },
+  "biotech": {
+   "label": "Biotechnology (mostly pre-profit)",
+   "columns": [
+    "net_cash",
+    "runway_quarters",
+    "ev_s",
+    "rev_growth_3y"
+   ],
+   "drop_first_if_tight": [
+    "rev_growth_3y"
+   ],
+   "stage_rule": "Pre-revenue: all earnings multiples n/m; the table is EV vs net cash and runway. Commercial-stage: add ev_s and growth.",
+   "clean_comp_rule": "Comp by stage and modality only with real caution; most biotech 'comps' are decorative.",
+   "pitfalls": "A biotech trading below net cash is a real screen hit; everything else about the valuation lives in the science, which no multiple captures."
+  },
+  "medtech_healthcare": {
+   "label": "Medical devices, instruments, diagnostics, specialties",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "rev_growth_3y"
+   ],
+   "drop_first_if_tight": [
+    "rev_growth_3y"
+   ],
+   "clean_comp_rule": "Match regulatory moat and recurring-revenue share (consumables vs capital equipment).",
+   "pitfalls": "Capital-equipment names are cyclical against hospital budgets; consumables deserve the premium."
+  },
+  "healthcare_providers_plans": {
+   "label": "Care facilities and healthcare plans",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda"
+   ],
+   "drop_first_if_tight": [
+    "nd_ebitda"
+   ],
+   "clean_comp_rule": "Plans comp with plans (medical-loss ratio from filings), facilities with facilities (lease-adjusted leverage).",
+   "pitfalls": "Reimbursement policy risk dominates; leases make facility leverage look lighter than it is."
+  },
+  "retail_distribution": {
+   "label": "Retail and distribution (all verticals)",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda"
+   ],
+   "drop_first_if_tight": [
+    "nd_ebitda"
+   ],
+   "clean_comp_rule": "Match vertical and format (grocer with grocer, distributor with distributor); online/offline mix noted.",
+   "pitfalls": "Leases: use lease-including leverage or say you have not. Same-store sales from filings beat any multiple for direction. Thin-margin distributors: P/S is nearly useless, working capital is the business."
+  },
+  "consumer_brands": {
+   "label": "Consumer brands (food, beverage, household, apparel brands, luxury, tobacco)",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "div_yield"
+   ],
+   "drop_first_if_tight": [
+    "div_yield"
+   ],
+   "clean_comp_rule": "Match category and brand strength; private-label-exposed names are not brand comps.",
+   "pitfalls": "Volume vs price mix behind revenue growth matters; a 'cheap' brand losing volume is melting."
+  },
+  "restaurants_leisure": {
+   "label": "Restaurants, leisure, gaming, lodging, travel",
+   "columns": [
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda",
+    "pe"
+   ],
+   "drop_first_if_tight": [
+    "pe"
+   ],
+   "clean_comp_rule": "Match asset model (franchised vs owned; asset-light vs property-heavy casinos/hotels).",
+   "pitfalls": "Leases and whole-business EBITDA hide obligations; franchise systems and owner-operators deserve different multiples."
+  },
+  "autos": {
+   "label": "Auto manufacturers, parts, recreational vehicles",
+   "columns": [
+    "pe",
+    "ev_ebit",
+    "p_tbv",
+    "div_yield",
+    "nd_ebitda"
+   ],
+   "drop_first_if_tight": [
+    "nd_ebitda"
+   ],
+   "clean_comp_rule": "OEMs with OEMs, suppliers with suppliers; premium vs volume OEMs noted.",
+   "pitfalls": "Captive finance arms distort EV and leverage; use industrial net cash/debt ex-financial-services where disclosed (filing fact), and say so."
+  },
+  "homebuilders": {
+   "label": "Homebuilders and residential construction",
+   "columns": [
+    "p_tbv",
+    "pe",
+    "nd_ebitda",
+    "fcf_yield"
+   ],
+   "drop_first_if_tight": [
+    "fcf_yield"
+   ],
+   "clean_comp_rule": "Match geography and price point; land-bank strategy (owned vs optioned) changes book quality.",
+   "pitfalls": "Book value is land and inventory: the cycle question is whether it is carried below or above market. Peak-cycle P/E always looks cheap."
+  },
+  "construction_engineering": {
+   "label": "E&C, construction, infrastructure operations",
+   "columns": [
+    "ev_ebitda",
+    "ev_ebit",
+    "fcf_yield",
+    "nd_ebitda",
+    "backlog"
+   ],
+   "drop_first_if_tight": [
+    "backlog"
+   ],
+   "clean_comp_rule": "Match contract type (fixed-price vs cost-plus) and end market.",
+   "pitfalls": "Percentage-of-completion accounting hides problem contracts; backlog quality beats backlog size."
+  },
+  "industrial_manufacturing": {
+   "label": "Machinery, capital goods, electrical equipment, A&D, conglomerates, rentals",
+   "columns": [
+    "pe",
+    "ev_ebit",
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda"
+   ],
+   "drop_first_if_tight": [
+    "ev_ebitda"
+   ],
+   "clean_comp_rule": "Match end market and cycle position; defense primes carry backlog (filing) as an optional column.",
+   "pitfalls": "Depreciation policies vary; EV/EBIT is the harder test than EV/EBITDA for asset-heavy names (and for equipment-rental fleets)."
+  },
+  "transport": {
+   "label": "Airlines, rail, trucking, freight & logistics",
+   "columns": [
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda",
+    "pe"
+   ],
+   "drop_first_if_tight": [
+    "pe"
+   ],
+   "clean_comp_rule": "Mode with mode: rail vs trucking vs airline economics are not comparable; airlines need lease-including EV.",
+   "pitfalls": "Fuel and rate cycles drive single-year numbers; operating ratio (filings) is the industry's own language for rail/trucking."
+  },
+  "shipping": {
+   "label": "Marine shipping",
+   "columns": [
+    "p_tbv",
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda",
+    "div_yield"
+   ],
+   "drop_first_if_tight": [
+    "div_yield"
+   ],
+   "optional_if_sourced": [
+    "p_nav"
+   ],
+   "clean_comp_rule": "Match vessel class (tanker vs dry bulk vs container vs LNG) and charter coverage (spot vs time-chartered).",
+   "pitfalls": "The real book is fleet market value: P/TBV against stated book differs from P/NAV against broker valuations; charter-rate cyclicality makes trailing multiples nearly meaningless at turns."
+  },
+  "waste_env": {
+   "label": "Waste and environmental services",
+   "columns": [
+    "ev_ebitda",
+    "fcf_yield",
+    "nd_ebitda",
+    "pe"
+   ],
+   "drop_first_if_tight": [
+    "pe"
+   ],
+   "clean_comp_rule": "Match route density/contract structure; hazardous vs solid waste differ.",
+   "pitfalls": "Landfill capex cycles depress FCF temporarily; distinguish growth from maintenance capex where disclosed."
+  },
+  "asset_light_services": {
+   "label": "Asset-light services (consulting, staffing, IT services, brokers, agencies, education)",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "fcf_yield",
+    "rev_growth_3y"
+   ],
+   "drop_first_if_tight": [
+    "rev_growth_3y"
+   ],
+   "clean_comp_rule": "Match service line and client cyclicality (staffing is early-cycle, consulting mid, audit stable).",
+   "pitfalls": "People walk out of the door; margin durability is culture, which no multiple shows. Working capital is the balance-sheet tell."
+  },
+  "utilities": {
+   "label": "Utilities (regulated, diversified, IPPs, renewables)",
+   "columns": [
+    "pe",
+    "div_yield",
+    "p_b",
+    "nd_ebitda"
+   ],
+   "drop_first_if_tight": [
+    "p_b"
+   ],
+   "clean_comp_rule": "Regulated with regulated (compare allowed-return regimes), merchant/IPP with merchant; renewables developers are a third bucket.",
+   "pitfalls": "Leverage is structural, not distress; the question is regulatory regime and rate-base growth (filings), not the raw multiple."
+  },
+  "general": {
+   "label": "Default when no industry mapping applies",
+   "columns": [
+    "pe",
+    "ev_ebitda",
+    "p_tbv",
+    "p_s",
+    "fcf_yield"
+   ],
+   "drop_first_if_tight": [
+    "p_s"
+   ],
+   "clean_comp_rule": "Same business model and size class; when in doubt, fewer but cleaner comps.",
+   "pitfalls": "If a name lands here, consider whether the industry mapping needs a new entry; log it rather than silently defaulting."
+  },
+  "investment_holdco": {
+   "label": "Investment holding companies / closed-end vehicles (NAV frame)",
+   "columns": [
+    "p_nav",
+    "p_tbv",
+    "div_yield"
+   ],
+   "drop_first_if_tight": [
+    "div_yield"
+   ],
+   "clean_comp_rule": "Comp on price to each company's last PUBLISHED NAV, dated per row; the subject's live look-through figure lives in the stat strip, not this table. Peers are other listed holdcos/closed-end vehicles with published NAVs, ideally same region or asset mix.",
+   "pitfalls": "Consolidated P/E and EV/EBITDA of fair-value earnings are revaluation-driven and never comparable — do not add them back. Never estimate a NAV a company has not published."
+  }
+ },
+ "industry_to_group": {
+  "Steel": "steel",
+  "Silver": "miners_precious",
+  "Other Precious Metals": "miners_precious",
+  "Gold": "miners_precious",
+  "Copper": "miners_base_bulk",
+  "Aluminum": "miners_base_bulk",
+  "Paper, Lumber & Forest Products": "materials_processing",
+  "Industrial Materials": "materials_processing",
+  "Construction Materials": "materials_processing",
+  "Chemicals - Specialty": "materials_processing",
+  "Chemicals": "materials_processing",
+  "Agricultural Inputs": "materials_processing",
+  "Telecommunications Services": "telecom",
+  "Internet Content & Information": "software",
+  "Publishing": "media",
+  "Broadcasting": "media",
+  "Advertising Agencies": "asset_light_services",
+  "Entertainment": "media",
+  "Media & Entertainment": "media",
+  "Electronic Gaming & Multimedia": "software",
+  "Communication Equipment": "tech_hardware",
+  "Travel Lodging": "restaurants_leisure",
+  "Travel Services": "restaurants_leisure",
+  "Specialty Retail": "retail_distribution",
+  "Luxury Goods": "consumer_brands",
+  "Home Improvement": "retail_distribution",
+  "Residential Construction": "homebuilders",
+  "Department Stores": "retail_distribution",
+  "Personal Products & Services": "asset_light_services",
+  "Leisure": "restaurants_leisure",
+  "Gambling, Resorts & Casinos": "restaurants_leisure",
+  "Furnishings, Fixtures & Appliances": "consumer_brands",
+  "Restaurants": "restaurants_leisure",
+  "Auto - Parts": "autos",
+  "Auto - Manufacturers": "autos",
+  "Auto - Recreational Vehicles": "autos",
+  "Auto - Dealerships": "retail_distribution",
+  "Apparel - Retail": "retail_distribution",
+  "Apparel - Manufacturers": "consumer_brands",
+  "Apparel - Footwear & Accessories": "consumer_brands",
+  "Packaging & Containers": "materials_processing",
+  "Education & Training Services": "asset_light_services",
+  "Tobacco": "consumer_brands",
+  "Grocery Stores": "retail_distribution",
+  "Discount Stores": "retail_distribution",
+  "Household & Personal Products": "consumer_brands",
+  "Packaged Foods": "consumer_brands",
+  "Food Distribution": "retail_distribution",
+  "Food Confectioners": "consumer_brands",
+  "Agricultural Farm Products": "agri_commodity",
+  "Beverages - Wineries & Distilleries": "consumer_brands",
+  "Beverages - Non-Alcoholic": "consumer_brands",
+  "Beverages - Alcoholic": "consumer_brands",
+  "Uranium": "miners_base_bulk",
+  "Solar": "industrial_manufacturing",
+  "Oil & Gas Refining & Marketing": "oil_gas_refining",
+  "Oil & Gas Midstream": "oil_gas_midstream",
+  "Oil & Gas Integrated": "oil_gas_integrated",
+  "Oil & Gas Exploration & Production": "oil_gas_ep",
+  "Oil & Gas Equipment & Services": "oil_gas_services",
+  "Oil & Gas Energy": "oil_gas_ep",
+  "Oil & Gas Drilling": "oil_gas_services",
+  "Coal": "miners_base_bulk",
+  "Shell Companies": "financial_other",
+  "Investment - Banking & Investment Services": "capital_markets_ib",
+  "Insurance - Specialty": "insurance_carriers",
+  "Insurance - Reinsurance": "insurance_carriers",
+  "Insurance - Property & Casualty": "insurance_carriers",
+  "Insurance - Life": "insurance_carriers",
+  "Insurance - Diversified": "insurance_carriers",
+  "Insurance - Brokers": "asset_light_services",
+  "Financial - Mortgages": "specialty_finance_credit",
+  "Financial - Diversified": "financial_other",
+  "Financial - Data & Stock Exchanges": "exchanges_data",
+  "Financial - Credit Services": "specialty_finance_credit",
+  "Financial - Conglomerates": "financial_other",
+  "Financial - Capital Markets": "capital_markets_ib",
+  "Banks - Regional": "banks",
+  "Banks - Diversified": "banks",
+  "Banks": "banks",
+  "Asset Management": "asset_managers",
+  "Asset Management - Bonds": "asset_managers",
+  "Asset Management - Income": "asset_managers",
+  "Asset Management - Leveraged": "asset_managers",
+  "Asset Management - Cryptocurrency": "asset_managers",
+  "Asset Management - Global": "asset_managers",
+  "Medical - Specialties": "medtech_healthcare",
+  "Medical - Pharmaceuticals": "pharma",
+  "Medical - Instruments & Supplies": "medtech_healthcare",
+  "Medical - Healthcare Plans": "healthcare_providers_plans",
+  "Medical - Healthcare Information Services": "software",
+  "Medical - Equipment & Services": "medtech_healthcare",
+  "Medical - Distribution": "retail_distribution",
+  "Medical - Diagnostics & Research": "medtech_healthcare",
+  "Medical - Devices": "medtech_healthcare",
+  "Medical - Care Facilities": "healthcare_providers_plans",
+  "Drug Manufacturers - Specialty & Generic": "pharma",
+  "Drug Manufacturers - General": "pharma",
+  "Biotechnology": "biotech",
+  "Waste Management": "waste_env",
+  "Trucking": "transport",
+  "Railroads": "transport",
+  "Aerospace & Defense": "industrial_manufacturing",
+  "Marine Shipping": "shipping",
+  "Integrated Freight & Logistics": "transport",
+  "Airlines, Airports & Air Services": "transport",
+  "General Transportation": "transport",
+  "Manufacturing - Tools & Accessories": "industrial_manufacturing",
+  "Manufacturing - Textiles": "industrial_manufacturing",
+  "Manufacturing - Miscellaneous": "industrial_manufacturing",
+  "Manufacturing - Metal Fabrication": "industrial_manufacturing",
+  "Industrial - Distribution": "retail_distribution",
+  "Industrial - Specialties": "industrial_manufacturing",
+  "Industrial - Pollution & Treatment Controls": "waste_env",
+  "Environmental Services": "waste_env",
+  "Industrial - Machinery": "industrial_manufacturing",
+  "Industrial - Infrastructure Operations": "construction_engineering",
+  "Industrial - Capital Goods": "industrial_manufacturing",
+  "Consulting Services": "asset_light_services",
+  "Business Equipment & Supplies": "industrial_manufacturing",
+  "Staffing & Employment Services": "asset_light_services",
+  "Rental & Leasing Services": "industrial_manufacturing",
+  "Engineering & Construction": "construction_engineering",
+  "Security & Protection Services": "asset_light_services",
+  "Specialty Business Services": "asset_light_services",
+  "Construction": "construction_engineering",
+  "Conglomerates": "industrial_manufacturing",
+  "Electrical Equipment & Parts": "industrial_manufacturing",
+  "Agricultural - Machinery": "industrial_manufacturing",
+  "Agricultural - Commodities/Milling": "agri_commodity",
+  "REIT - Specialty": "reits_equity",
+  "REIT - Retail": "reits_equity",
+  "REIT - Residential": "reits_equity",
+  "REIT - Office": "reits_equity",
+  "REIT - Mortgage": "reits_mortgage",
+  "REIT - Industrial": "reits_equity",
+  "REIT - Hotel & Motel": "reits_equity",
+  "REIT - Healthcare Facilities": "reits_equity",
+  "REIT - Diversified": "reits_equity",
+  "Real Estate - Services": "asset_light_services",
+  "Real Estate - Diversified": "real_estate_ops",
+  "Real Estate - Development": "real_estate_ops",
+  "Real Estate - General": "real_estate_ops",
+  "Information Technology Services": "asset_light_services",
+  "Hardware, Equipment & Parts": "tech_hardware",
+  "Computer Hardware": "tech_hardware",
+  "Software - Services": "software",
+  "Software - Infrastructure": "software",
+  "Software - Application": "software",
+  "Semiconductors": "semis",
+  "Technology Distributors": "retail_distribution",
+  "Consumer Electronics": "tech_hardware",
+  "Renewable Utilities": "utilities",
+  "Regulated Water": "utilities",
+  "Regulated Gas": "utilities",
+  "Regulated Electric": "utilities",
+  "Independent Power Producers": "utilities",
+  "Diversified Utilities": "utilities",
+  "General Utilities": "utilities"
+ },
+ "sector_fallback": {
+  "Basic Materials": "materials_processing",
+  "Communication Services": "media",
+  "Consumer Cyclical": "retail_distribution",
+  "Consumer Defensive": "consumer_brands",
+  "Energy": "oil_gas_ep",
+  "Financial Services": "financial_other",
+  "Healthcare": "medtech_healthcare",
+  "Industrials": "industrial_manufacturing",
+  "Real Estate": "real_estate_ops",
+  "Technology": "general",
+  "Utilities": "utilities"
+ },
+ "default_group": "general"
 }

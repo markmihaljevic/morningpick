@@ -17,7 +17,7 @@ import { getCoverageContext, coverageForPrompt } from "../lib/coverage";
 import { decideNote, noIdeaNote, type NoteKind, type DeskDecision } from "../lib/desk-editor";
 import { selectIdeaWithPreflight, updateWatchlist, hasReportedSince } from "../lib/select-idea";
 import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "../lib/fmp";
-import { generateVerifiedMemo } from "../lib/memo";
+import { generateVerifiedMemo, mergeMemoSources } from "../lib/memo";
 import { renderMemoEmail } from "../lib/emails/memo-email";
 import { buildResearchLinks } from "../lib/research-links";
 import { getOrBuildBrief } from "../lib/research";
@@ -26,6 +26,7 @@ import { greetingName } from "../lib/greeting";
 import { buildTearSheet } from "../lib/tear-sheet";
 import { buildFullReport } from "../lib/full-report";
 import { buildCompTable } from "../lib/comp-table";
+import { getHoldcoContext } from "../lib/holdco";
 import { writeCoverNote, fallbackCoverBody, writeNoIdeaNote, fallbackNoIdeaBody, bareTicker } from "../lib/cover-note";
 import { normalizeCompanyName } from "../lib/company-key";
 import { config } from "../lib/config";
@@ -334,12 +335,20 @@ async function main() {
   const referenceLinks =
     memoKind === "review" ? [] : buildResearchLinks(ticker, companyName ?? ticker, companyProfile);
 
-  const [researchBrief, compTable] = await Promise.all([
+  const [researchBrief, { holdcoCtx, compTable }] = await Promise.all([
     memoKind === "review" ? null : getOrBuildBrief(ticker, companyName, data, "demo"),
-    memoKind === "review" ? null : buildCompTable({ ticker, companyName, data }),
+    (async () => {
+      if (memoKind === "review") return { holdcoCtx: null, compTable: null };
+      const holdcoCtx = await getHoldcoContext({ ticker, companyName, data });
+      const compTable = await buildCompTable({ ticker, companyName, data, holdco: Boolean(holdcoCtx) });
+      return { holdcoCtx, compTable };
+    })(),
   ]);
   const holdings = await getPortfolio(subscriber.id);
   console.error(`Research brief: ${researchBrief ? `ready (${researchBrief.sources.length} sources)` : "unavailable — legacy path"}`);
+  console.error(
+    `Holdco: ${holdcoCtx ? (holdcoCtx.liveNav ? `LIVE NAV ${holdcoCtx.liveNav.perShare.toFixed(2)} ${holdcoCtx.liveNav.listingCurrency}/sh → ${holdcoCtx.liveNav.pToNav.toFixed(2)}x (${holdcoCtx.liveNav.discountPct.toFixed(0)}% ${holdcoCtx.liveNav.discountPct >= 0 ? "discount" : "premium"}, class ${holdcoCtx.liveNav.discountClass})` : "published-NAV frame") : "not a holdco"}`,
+  );
   console.error(
     `Comp table: ${compTable ? `${compTable.groupLabel} — ${compTable.columns.map((c) => c.label).join(", ")} (${compTable.rows.length} rows)` : "none"}`,
   );
@@ -358,6 +367,7 @@ async function main() {
     portfolio: holdings,
     referenceLinks,
     peerComps: compTable?.textForPrompt,
+    holdco: holdcoCtx,
   });
   console.error(
     `Verification: ${memo.verification.critical_issues.length} critical, ${memo.verification.minor_issues.length} minor issues`,
@@ -377,11 +387,12 @@ async function main() {
             data,
             meta: memo.meta,
             fullNoteMarkdown: memo.markdown,
-            verifySources: memo.sources,
+            verifySources: mergeMemoSources(researchBrief?.sources, memo.sources),
             peerComps: compTable?.textForPrompt,
             peers: compTable?.rows.filter((r) => !r.self).map((r) => ({ symbol: r.ticker, name: r.name })),
+            holdco: holdcoCtx,
           }),
-          buildFullReport({ markdown: memo.markdown, ticker, companyName, dateLine, data, meta: memo.meta, sources: memo.sources, compTable }),
+          buildFullReport({ markdown: memo.markdown, ticker, companyName, dateLine, data, meta: memo.meta, sources: mergeMemoSources(researchBrief?.sources, memo.sources), compTable }),
         ]);
   console.error(
     `Attachments: one-pager ${tearSheet ? `${(tearSheet.length / 1024).toFixed(0)} KB` : "none"}, ` +
@@ -396,6 +407,9 @@ async function main() {
     isReview: memoKind === "review",
     attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
     funnel: memoKind === "idea" || memoKind === "second_look" ? funnelContext : undefined,
+    holdco: holdcoCtx?.liveNav
+      ? { discountPct: holdcoCtx.liveNav.discountPct, discountClass: holdcoCtx.liveNav.discountClass }
+      : null,
   });
   const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
   const coverSubject =

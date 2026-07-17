@@ -6,7 +6,7 @@ import type { Profile } from "@/lib/profile";
 import { type ScreenParams } from "@/lib/screens";
 import { sendAdminAlert } from "@/lib/alerts";
 import { fetchTickerData, fetchHeadlines, fetchUpcomingEarnings, type TickerData } from "@/lib/fmp";
-import { generateVerifiedMemo } from "@/lib/memo";
+import { generateVerifiedMemo, mergeMemoSources } from "@/lib/memo";
 import { renderMemoEmail } from "@/lib/emails/memo-email";
 import { buildResearchLinks } from "@/lib/research-links";
 import { extractPitchPrice } from "@/lib/performance";
@@ -17,6 +17,7 @@ import { greetingName } from "@/lib/greeting";
 import { buildTearSheet } from "@/lib/tear-sheet";
 import { buildFullReport } from "@/lib/full-report";
 import { buildCompTable } from "@/lib/comp-table";
+import { getHoldcoContext } from "@/lib/holdco";
 import { identityFromProfile, normalizeCompanyName } from "@/lib/company-key";
 import { writeCoverNote, fallbackCoverBody, writeNoIdeaNote, fallbackNoIdeaBody, bareTicker } from "@/lib/cover-note";
 import {
@@ -620,11 +621,22 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     // Research once, write per subscriber: acquire the day's shared fact
     // base for this ticker (built by whichever worker gets here first).
     // null → legacy self-researched path, so a brief failure never blocks.
-    // The comp table (sector-aware, filing facts cached) builds in parallel —
+    // The holdco detection (July 17) runs FIRST on its branch because the
+    // comp table's metric group depends on it; the brief runs in parallel.
     // ONE table feeds the writer, the verifier, and the one-pager alike.
-    const [researchBrief, compTable] = await Promise.all([
+    const [researchBrief, { holdcoCtx, compTable }] = await Promise.all([
       memoKind === "review" ? null : getOrBuildBrief(ticker, companyName, data, delivery.id),
-      memoKind === "review" ? null : buildCompTable({ ticker, companyName, data }),
+      (async () => {
+        if (memoKind === "review") return { holdcoCtx: null, compTable: null };
+        const holdcoCtx = await getHoldcoContext({ ticker, companyName, data });
+        if (holdcoCtx) {
+          console.log(
+            `Holdco frame for ${ticker}: ${holdcoCtx.liveNav ? `live NAV ${holdcoCtx.liveNav.perShare.toFixed(2)} ${holdcoCtx.liveNav.listingCurrency}/sh, ${holdcoCtx.liveNav.discountPct.toFixed(0)}% ${holdcoCtx.liveNav.discountPct >= 0 ? "discount" : "premium"} (${holdcoCtx.liveNav.discountClass})` : "published-NAV frame (live marking unavailable)"}`,
+          );
+        }
+        const compTable = await buildCompTable({ ticker, companyName, data, holdco: Boolean(holdcoCtx) });
+        return { holdcoCtx, compTable };
+      })(),
     ]);
 
     // Context-only holdings: the writer sees what they own; selection doesn't.
@@ -650,6 +662,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       portfolio: holdings,
       referenceLinks,
       peerComps: compTable?.textForPrompt,
+      holdco: holdcoCtx,
       light: lightMode,
     });
     const h1Title = memo.title; // "TICKER — hook" — the attached report's title
@@ -675,6 +688,10 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       year: "numeric",
       timeZone: "UTC",
     });
+    // The report's Sources = the brief's fact base + writer citations — the
+    // writer runs without web tools when a brief exists, so memo.sources
+    // alone shipped a near-empty Sources section (July 17 P.S.).
+    const reportSources = mergeMemoSources(researchBrief?.sources, memo.sources);
 
     // Build the attachments FIRST: page one can legitimately come back null
     // (it must pass its own fact-check to ship), and the cover note must
@@ -692,9 +709,10 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
           data,
           meta: memo.meta,
           fullNoteMarkdown: memo.markdown,
-          verifySources: memo.sources,
+          verifySources: reportSources,
           peerComps: compTable?.textForPrompt,
           peers: compTable?.rows.filter((r) => !r.self).map((r) => ({ symbol: r.ticker, name: r.name })),
+          holdco: holdcoCtx,
         }),
         // The report carries the full workings: chart, comps, scenarios.
         buildFullReport({
@@ -704,7 +722,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
           dateLine,
           data,
           meta: memo.meta,
-          sources: memo.sources,
+          sources: reportSources,
           compTable,
         }),
       ]);
@@ -719,6 +737,9 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       isReview: memoKind === "review",
       attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
       funnel: memoKind === "idea" || memoKind === "second_look" ? plan.funnelContext : undefined,
+      holdco: holdcoCtx?.liveNav
+        ? { discountPct: holdcoCtx.liveNav.discountPct, discountClass: holdcoCtx.liveNav.discountClass }
+        : null,
     });
     const hook = h1Title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
     // Rule 4: the subject says what the email IS — reviews lead "Your book —";
@@ -774,7 +795,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       pitch_price: pitch.price,
       pitch_currency: pitch.currency,
       // Keep only what coverage/telemetry read back — the email is prose now.
-      extras: { researchLinks, sources: memo.sources, meta: memo.meta, dateLine },
+      extras: { researchLinks, sources: reportSources, meta: memo.meta, dateLine },
     });
     if (memoError) throw new Error(`Memo insert failed: ${memoError.message}`);
   }

@@ -3,6 +3,7 @@ import { anthropic } from "./anthropic";
 import { config } from "./config";
 import { db } from "./db";
 import { fmpGet } from "./fmp";
+import { trimAtBoundary } from "./text";
 
 /**
  * Peer selection is a judgment call, not a screen (John's rule 1). A
@@ -78,7 +79,7 @@ async function validatePeers(subject: string, peers: SelectedPeer[]): Promise<Se
       try {
         const quote = await fmpGet<{ price?: number }[]>("quote", { symbol: ticker });
         if (quote?.[0]?.price !== undefined) {
-          return { ticker, name: p.name.slice(0, 60), rationale: p.rationale.slice(0, 200) };
+          return { ticker, name: p.name.slice(0, 60), rationale: trimAtBoundary(p.rationale, 300) };
         }
         console.warn(`Peer ${ticker} (for ${subject}) not resolvable on FMP — dropped.`);
       } catch {

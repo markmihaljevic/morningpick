@@ -14,6 +14,7 @@ import { verifyMemo, type VerificationResult } from "./verify";
 import { buildComputedFigures } from "./figures";
 import { editMemo } from "./editor";
 import type { ResearchBrief } from "./research";
+import { holdcoPromptBlock, holdcoAdjectiveIssues, type HoldcoContext } from "./holdco";
 
 const MAX_CONTINUATIONS = 5;
 
@@ -28,6 +29,32 @@ function safeDomain(url: string): string | null {
 export interface MemoSource {
   url: string;
   title: string;
+}
+
+/**
+ * The report's Sources section = the day's research-brief sources (the actual
+ * fact base — the writer runs WITHOUT web tools when a brief exists, so its
+ * own citation set is nearly empty) merged with any writer citations. Dedup
+ * by URL; a bare page title like "Home" falls back to the domain so the list
+ * reads as sources, not tabs. (July 17: CGEO's report shipped one source
+ * titled "Home" — the brief's sources never reached the PDF.)
+ */
+export function mergeMemoSources(
+  briefSources: MemoSource[] | undefined,
+  memoSources: MemoSource[],
+  cap = 12,
+): MemoSource[] {
+  const byUrl = new Map<string, MemoSource>();
+  for (const s of [...(briefSources ?? []), ...memoSources]) {
+    if (!s?.url || byUrl.has(s.url)) continue;
+    const domain = safeDomain(s.url);
+    const title =
+      s.title && s.title.trim().length > 4 && !/^(home|index|welcome)$/i.test(s.title.trim())
+        ? s.title.trim()
+        : (domain ?? s.url);
+    byUrl.set(s.url, { url: s.url, title });
+  }
+  return [...byUrl.values()].slice(0, cap);
 }
 
 export interface GeneratedMemo {
@@ -60,6 +87,8 @@ export async function generateMemo(args: {
   referenceLinks?: { label: string; url: string }[];
   /** Sector-aware comp table block — quoted verbatim, clean anchors only. */
   peerComps?: string;
+  /** Investment-holdco NAV frame (lib/holdco.ts) — overrides multiple framing. */
+  holdco?: HoldcoContext | null;
   /** Final-attempt degradation: fewer tool rounds, no editorial — ship good over perfect. */
   light?: boolean;
 }): Promise<GeneratedMemo> {
@@ -81,6 +110,7 @@ export async function generateMemo(args: {
     referenceLinks: args.referenceLinks,
     computedFigures: args.review ? undefined : await buildComputedFigures(args.data),
     peerComps: args.review ? undefined : args.peerComps,
+    holdcoBlock: args.holdco && !args.review ? holdcoPromptBlock(args.holdco) : undefined,
   });
 
   const baseRequest = {
@@ -394,15 +424,37 @@ export async function generateVerifiedMemo(args: {
   portfolio?: { ticker: string; name: string | null; note: string | null }[];
   referenceLinks?: { label: string; url: string }[];
   peerComps?: string;
+  holdco?: HoldcoContext | null;
   light?: boolean;
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   const MAX_REGENS = args.light ? 1 : 2;
   // The same precomputed figures the writer quotes — ground truth for the check.
   const figures = args.review ? [] : await buildComputedFigures(args.data);
+  const verifyOpts = {
+    review: Boolean(args.review),
+    priorReviews: args.review?.priorReviews,
+    holdcoBlock: args.holdco && !args.review ? holdcoPromptBlock(args.holdco) : undefined,
+  };
+  // Rule 5 (July 17): words trace to numbers. The deterministic adjective
+  // gate rides INSIDE the verify loop — a mismatch is a critical issue the
+  // regen machinery repairs, exactly like a wrong figure.
+  const wordGate = (markdown: string): { claim: string; problem: string }[] =>
+    args.holdco?.liveNav && !args.review
+      ? holdcoAdjectiveIssues(markdown, args.holdco.liveNav.discountClass, args.holdco.liveNav.discountPct).map(
+          (p) => ({ claim: "valuation adjective", problem: p }),
+        )
+      : [];
+  const withWordGate = (v: VerificationResult, markdown: string): VerificationResult => {
+    const word = wordGate(markdown);
+    return word.length === 0 ? v : { ...v, passed: false, critical_issues: [...v.critical_issues, ...word] };
+  };
   let memo = await generateMemo(args);
   // The attribution check should recognize brief-sourced claims as sourced.
   const verifySources = args.researchBrief ? args.researchBrief.sources : memo.sources;
-  let verification = await verifyMemo(memo.markdown, args.data, verifySources, figures, args.peerComps, { review: Boolean(args.review), priorReviews: args.review?.priorReviews });
+  let verification = withWordGate(
+    await verifyMemo(memo.markdown, args.data, verifySources, figures, args.peerComps, verifyOpts),
+    memo.markdown,
+  );
   const priorIssues: { claim: string; problem: string }[] = [];
   for (let regen = 0; !verification.passed && regen < MAX_REGENS; regen++) {
     priorIssues.push(...verification.critical_issues);
@@ -419,7 +471,10 @@ export async function generateVerifiedMemo(args: {
           .map((i) => `- "${i.claim}": ${i.problem}`)
           .join("\n")}`,
     });
-    verification = await verifyMemo(memo.markdown, args.data, verifySources, figures, args.peerComps, { review: Boolean(args.review), priorReviews: args.review?.priorReviews });
+    verification = withWordGate(
+      await verifyMemo(memo.markdown, args.data, verifySources, figures, args.peerComps, verifyOpts),
+      memo.markdown,
+    );
   }
   if (!verification.passed) {
     throw new Error(
@@ -429,6 +484,28 @@ export async function generateVerifiedMemo(args: {
         .slice(0, 500)}`,
     );
   }
-  const meta = await extractMemoMeta(memo.markdown);
+  let meta = await extractMemoMeta(memo.markdown);
+  // Rule 5 (July 17): the meta rides to the reader (tear-sheet thesis line,
+  // scenario box, cover fallback) — it passes the same word gate as the body.
+  if (meta && args.holdco?.liveNav && !args.review) {
+    const metaText = [meta.one_liner, meta.scenarios?.bear, meta.scenarios?.base, meta.scenarios?.bull]
+      .filter(Boolean)
+      .join("\n");
+    const metaIssues = holdcoAdjectiveIssues(metaText, args.holdco.liveNav.discountClass, args.holdco.liveNav.discountPct);
+    if (metaIssues.length > 0) {
+      console.warn(`Meta word-gate issues for ${args.ticker} — re-extracting once:`, metaIssues);
+      meta = await extractMemoMeta(
+        `${memo.markdown}\n\n<!-- REPAIR: your previous extraction broke the discount register: ${metaIssues.join("; ")} — the computed class is "${args.holdco.liveNav.discountClass}". -->`,
+      );
+      if (meta) {
+        const still = holdcoAdjectiveIssues(
+          [meta.one_liner, meta.scenarios?.bear, meta.scenarios?.base, meta.scenarios?.bull].filter(Boolean).join("\n"),
+          args.holdco.liveNav.discountClass,
+          args.holdco.liveNav.discountPct,
+        );
+        if (still.length > 0) meta = null; // correct-or-nothing: no meta beats a wrong adjective
+      }
+    }
+  }
   return { ...memo, verification, meta };
 }

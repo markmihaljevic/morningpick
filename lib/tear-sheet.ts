@@ -7,6 +7,7 @@ import { writePageOneMemo } from "./page-one";
 import { config } from "./config";
 import type { TickerData } from "./fmp";
 import type { MemoMeta, MemoSource } from "./memo";
+import type { HoldcoContext } from "./holdco";
 
 /**
  * Build page one of the idea PDF: the one-page memo (header block, thesis,
@@ -31,13 +32,16 @@ export async function buildTearSheet(args: {
    * no-peer-names gate scans THESE (data.peers is dead; scanning the old
    * screen list would wave through every real peer). */
   peers?: { symbol: string; name: string }[];
+  /** Investment-holdco NAV frame (July 17): NAV-led strip, and the page-one
+   * fact-check gets the computed bridge as ground truth. */
+  holdco?: HoldcoContext | null;
 }): Promise<Buffer | null> {
   try {
     const p = (Array.isArray(args.data.profile) ? args.data.profile[0] : args.data.profile) as
       | { industry?: string; exchange?: string; exchangeShortName?: string }
       | undefined;
     const [strip, figures, snapshot] = await Promise.all([
-      buildStatStrip(args.data),
+      buildStatStrip(args.data, args.holdco),
       buildComputedFigures(args.data),
       buildSnapshot(args.data),
     ]);
@@ -54,6 +58,7 @@ export async function buildTearSheet(args: {
       verifySources: args.verifySources ?? [],
       peers: args.peers ?? [],
       peerComps: args.peerComps,
+      holdco: args.holdco,
     });
     if (!pageOne) {
       console.warn(`No page-one memo for ${args.ticker}; sending the full report alone.`);

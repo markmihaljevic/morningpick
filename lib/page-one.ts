@@ -4,6 +4,7 @@ import type { TickerData } from "./fmp";
 import type { ComputedFigure } from "./figures";
 import type { KeyStat } from "./stats";
 import { verifyMemo } from "./verify";
+import { holdcoPromptBlock, holdcoAdjectiveIssues } from "./holdco";
 
 /**
  * Page one of the idea PDF: a one-page memo in the register of a Howard
@@ -123,14 +124,21 @@ export async function writePageOneMemo(args: {
   peers?: { symbol: string; name: string }[];
   /** The comp table block — ground truth if a peer figure slips through. */
   peerComps?: string;
+  /** Investment-holdco NAV frame (July 17) — the page's valuation section
+   * reads from the live discount; the fact-check gets the computed bridge. */
+  holdco?: import("./holdco").HoldcoContext | null;
 }): Promise<PageOneMemo | null> {
   const cfg = config();
   const stripLine = args.strip.map((s) => `${s.label}: ${s.value}`).join(" | ");
   const figuresBlock = args.figures.map((f) => `${f.label}: ${f.value}`).join("\n");
+  const holdcoBlockText = args.holdco ? holdcoPromptBlock(args.holdco) : null;
   const userContent = (repairNote: string) =>
     `<full_note ticker="${args.ticker}" company="${args.companyName ?? ""}">\n${args.fullNoteMarkdown}\n</full_note>\n\n` +
     `<stat_strip note="page one's own strip — the reader sees these exact values">\n${stripLine}\n</stat_strip>\n\n` +
     `<computed_figures note="the snapshot behind the strip, at today's close${args.balanceSheetDate ? `; balance sheet dated ${args.balanceSheetDate}` : ""}">\n${figuresBlock}\n</computed_figures>\n\n` +
+    (holdcoBlockText
+      ? `<holdco_valuation_frame note="this is an investment holding company — the valuation section reads from the LIVE discount below, never from consolidated P/E of revaluation earnings">\n${holdcoBlockText}\n</holdco_valuation_frame>\n\n`
+      : "") +
     `Context for the handle: industry "${args.industry ?? "?"}", exchange "${args.exchange ?? "?"}".\n` +
     `${repairNote}Write the five sections and the handle.`;
 
@@ -187,8 +195,15 @@ export async function writePageOneMemo(args: {
         args.verifySources,
         args.figures,
         args.peerComps,
+        holdcoBlockText ? { holdcoBlock: holdcoBlockText } : undefined,
       );
-      if (verification.passed) return memo;
+      // Rule 5: the page's discount words must match the computed class.
+      const wordIssues =
+        args.holdco?.liveNav
+          ? holdcoAdjectiveIssues(pageText, args.holdco.liveNav.discountClass, args.holdco.liveNav.discountPct)
+          : [];
+      if (verification.passed && wordIssues.length === 0) return memo;
+      verification.critical_issues.push(...wordIssues.map((p) => ({ claim: "valuation adjective", problem: p })));
       console.warn(
         `Page-one memo failed verification for ${args.ticker} (attempt ${attempt + 1}):`,
         verification.critical_issues,

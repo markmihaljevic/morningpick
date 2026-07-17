@@ -1,6 +1,7 @@
 import type { TickerData } from "./fmp";
 import { buildSnapshot } from "./figures";
 import { resolveMetricGroup } from "./comp-table";
+import type { HoldcoContext } from "./holdco";
 
 export interface KeyStat {
   label: string;
@@ -19,7 +20,7 @@ const BALANCE_SHEET_BUSINESS = new Set(["banks", "insurance_carriers", "capital_
  * exists; when none does, the EV-family cells carry a * (vendor-derived) so
  * the degradation is never silent. The strip carries the precision.
  */
-export async function buildStatStrip(data: TickerData): Promise<KeyStat[]> {
+export async function buildStatStrip(data: TickerData, holdco?: HoldcoContext | null): Promise<KeyStat[]> {
   const s = await buildSnapshot(data);
   const money = (v: number | null, cur: string) => {
     if (v === null) return "n/a";
@@ -29,6 +30,51 @@ export async function buildStatStrip(data: TickerData): Promise<KeyStat[]> {
     return `${sign}${cur}${(a / 1e6).toFixed(0)}M`;
   };
   const x = (v: number | null, dp = 1) => (v !== null && v > 0 && v <= 1000 ? `${v.toFixed(dp)}x` : "n/a");
+
+  // Investment holdco (July 17): the frame is NAV and the discount to it —
+  // consolidated P/E and EV/EBITDA of revaluation earnings NEVER appear in
+  // the strip, live frame or not. Live look-through figures lead; when live
+  // marking failed, the PUBLISHED NAV (dated) frames instead — the strip
+  // must never revert to P/E just because a stake quote was unavailable.
+  if (holdco?.liveNav || holdco?.publishedListing) {
+    const priceStr = s.price !== null ? `${s.listCur}${s.price >= 100 ? s.price.toFixed(0) : s.price.toFixed(2)}` : "n/a";
+    const items: KeyStat[] = [
+      { label: "Price", value: priceStr },
+      { label: "Mkt cap", value: money(s.marketCap, s.listCurMajor) },
+    ];
+    if (holdco.liveNav) {
+      const n = holdco.liveNav;
+      items.push(
+        { label: "P/Live NAV", value: `${n.pToNav.toFixed(2)}x` },
+        {
+          label: n.discountPct >= 0 ? "Disc. to live NAV" : "Prem. to live NAV",
+          value: `${Math.abs(n.discountPct).toFixed(0)}%`,
+        },
+        { label: "Live NAV/sh", value: `${n.listingCurrency} ${n.perShare.toFixed(2)}` },
+      );
+      if (n.publishedPerShare && n.publishedAsOf) {
+        items.push({
+          label: `NAV/sh (pub. ${n.publishedAsOf.slice(5)})`,
+          value: `${n.listingCurrency} ${n.publishedPerShare.toFixed(2)}`,
+        });
+      }
+    } else if (holdco.publishedListing) {
+      const p = holdco.publishedListing;
+      const discPct = (1 - p.pToNav) * 100;
+      items.push(
+        { label: `P/NAV (pub. ${p.asOf.slice(5)})`, value: `${p.pToNav.toFixed(2)}x` },
+        {
+          label: discPct >= 0 ? "Disc. to pub. NAV" : "Prem. to pub. NAV",
+          value: `${Math.abs(discPct).toFixed(0)}%`,
+        },
+        { label: `NAV/sh (pub.)`, value: `${s.listCurMajor} ${p.perShare.toFixed(2)}` },
+      );
+    }
+    if (s.divYield !== null) {
+      items.push({ label: "Div yield", value: `${(s.divYield * 100).toFixed(1)}%` });
+    }
+    return items;
+  }
 
   const items: KeyStat[] = [
     {

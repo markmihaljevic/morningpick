@@ -60,7 +60,8 @@ const VERIFY_SYSTEM = `You are a fact-checker for an investment memo before it i
 - Flag as CRITICAL: dataset-attributed figures that contradict the dataset, invented figures presented as dataset facts, magnitude errors, wrong currency/units.
 - Flag as MINOR: rounding beyond ~2%, vague attribution.
 - REVIEW ACTION DISCIPLINE (a further exception to numbers-only): when the user message contains a <review_action_rules> block, this memo is a book review and that block's checks ARE in scope — apply them exactly as written and report violations as CRITICAL issues. This is the desk's standing discipline for reviews, not a style opinion.
-Do not otherwise comment on investment logic, style, or opinions — numbers against the dataset, plus the attribution check and any <review_action_rules> block above.`;
+- HOLDCO NAV FRAME (a further exception to numbers-only): when the user message contains a <holdco_nav_frame> block, its computed values are ground truth and its framing checks ARE in scope — apply them exactly as written and report violations as CRITICAL issues. Words must trace to computed figures: a "wide discount" above a computed near-NAV gap is as wrong as a bad number.
+Do not otherwise comment on investment logic, style, or opinions — numbers against the dataset, plus the attribution check and any <review_action_rules> or <holdco_nav_frame> block above.`;
 
 /** Audit a memo's figures against the grounding dataset. Fail-open on errors. */
 export async function verifyMemo(
@@ -69,7 +70,12 @@ export async function verifyMemo(
   webSources: { url: string; title: string }[] = [],
   computedFigures: ComputedFigure[] = [],
   peerComps?: string,
-  opts?: { review?: boolean; priorReviews?: { date: string; headline: string; action: string }[] },
+  opts?: {
+    review?: boolean;
+    priorReviews?: { date: string; headline: string; action: string }[];
+    /** Investment-holdco NAV frame (desk-computed) — ground truth + framing rules. */
+    holdcoBlock?: string;
+  },
 ): Promise<VerificationResult> {
   // Review-only discipline (John, July 14) rides in the USER message so the
   // static system prompt stays prompt-cached.
@@ -104,6 +110,9 @@ export async function verifyMemo(
             (peerComps ? `${peerComps}\n\n` : "") +
             (webSources.length > 0
               ? `<web_sources note="search results the author consulted — you cannot see their contents">\n${webSources.map((s) => `- ${s.title} (${s.url})`).join("\n")}\n</web_sources>\n\n`
+              : "") +
+            (opts?.holdcoBlock
+              ? `<holdco_nav_frame note="desk-computed NAV frame for this investment holding company — GROUND TRUTH, and IN-SCOPE framing checks per the review-discipline exception. Flag as CRITICAL: (a) any NAV, discount, or per-share figure contradicting these computed values; (b) a valuation adjective (wide/modest/near NAV/premium) that contradicts the stated discount class; (c) consolidated P/E or EV/EBITDA of fair-value earnings LEADING the title or thesis, or appearing without the revaluation-driven label; (d) any hedge like 'cannot verify a live discount' when the live computation is right here.">\n${opts.holdcoBlock}\n</holdco_nav_frame>\n\n`
               : "") +
             reviewRules +
             `<memo>\n${markdown}\n</memo>`,

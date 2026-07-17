@@ -44,6 +44,11 @@ const envSchema = z.object({
   // register changes never touch it. Weekly (free) subscribers always get an
   // idea: their single Monday email must not be a review of an empty book.
   REVIEW_WEEKDAYS: z.string().default("1"),
+  // Holdco discount adjectives bind to thresholds (John, July 17): "wide" is
+  // this % discount to live look-through NAV or more; "modest" from this
+  // floor up to wide; below that reads "near NAV" (or premium past -floor).
+  HOLDCO_WIDE_MIN: z.coerce.number().default(25),
+  HOLDCO_MODEST_MIN: z.coerce.number().default(10),
 
   // Attach the one-page tear-sheet PDF to daily notes. Off before a domain
   // warm-up if attachments dent inbox placement at scale.

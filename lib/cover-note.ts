@@ -1,6 +1,7 @@
 import { anthropic } from "./anthropic";
 import { config } from "./config";
 import type { MemoMeta } from "./memo";
+import { holdcoAdjectiveIssues, DISCOUNT_CLASS_PHRASE } from "./holdco";
 
 /**
  * The short cover note that IS the morning email, written AS IF FROM MEMORY,
@@ -37,7 +38,7 @@ const COVER_SYSTEM = `You are an investment analyst writing the short morning em
 
 REGISTER RULES (every one is checked):
 1. FROM MEMORY: the pitch in plain words, then rounded numbers the way a person speaks — "about 510p", "roughly 14% below my pitch", "just above tangible book", "near 10x this year's earnings". NEVER exact figures: no "512.6p", no "€43.99", no "3.6%" — decimals belong in the PDF. At most two or three numbers for the ONE name you'd act on; at most one number for anyone else.
-2. VALUATION ANCHORS, ABSOLUTE NOT RELATIVE: one or two of your numbers must be P/TBV, P/E, or FCF yield. Never make a price move the headline without the multiple it produced — "down 3%" only matters as "still just above tangible book".
+2. VALUATION ANCHORS, ABSOLUTE NOT RELATIVE: one or two of your numbers must be P/TBV, P/E, or FCF yield — or, when the note is framed on NAV (a holding company), the NAV discount or multiple instead. Never make a price move the headline without the multiple it produced — "down 3%" only matters as "still just above tangible book" (or "still a modest discount to NAV" on a holdco).
 3. SHAPE: three short paragraphs, TWO sentences each (a third sentence only if the sentences are short) — aim for about 150 words, never more than 180. One thought per paragraph, blank line between them, never a single block. Before you finish, count the words in your body; if it runs over 170, cut a WHOLE sentence (a quiet name, an aside) and count again — do not shave words from every line.
 4. The SUBJECT says what the email is. Idea day → "TICKER: hook" (bare ticker, no exchange suffix). Review day → "Your book — hook". A ticker subject promises a fresh idea; never put one on a review.
 5. Do NOT write a greeting, sign-off, or reply invitation — the template adds all three. Start with your first real sentence.
@@ -169,6 +170,9 @@ export async function writeCoverNote(args: {
     convictionReason: string;
     whatWouldChange: string;
   };
+  /** Investment holdco (July 17): the email's valuation words must read from
+   * the computed live discount — same class as thesis and body. */
+  holdco?: { discountPct: number; discountClass: import("./holdco").DiscountClass } | null;
 }): Promise<CoverNote | null> {
   const cfg = config();
   const att = args.attachments ?? { onePager: true, fullReport: true };
@@ -205,6 +209,11 @@ export async function writeCoverNote(args: {
   // plainly when the LIST is weak (quiet list) or the NAME is (low absolute
   // conviction on a normal list).
   const speakConviction = f ? f.quietList || f.conviction <= 4 : false;
+  // Rule 5 (July 17): email, thesis, and body agree on the state of the
+  // discount — the cover reads from the same computed number as the note.
+  const holdcoNote = args.holdco
+    ? `HOLDCO DISCOUNT (desk-computed, binding): the live look-through discount is ${args.holdco.discountPct.toFixed(0)}% — the class is "${args.holdco.discountClass}" (${DISCOUNT_CLASS_PHRASE[args.holdco.discountClass]}). Any words you use about the discount must match that class; never "wide" on a near-NAV gap, never a tangible-book framing on a NAV story.`
+    : "";
   const funnelNote = f
     ? `PLACING LINE (desk facts, not in the note below — use these numbers verbatim): include ONE short line placing the name: it ${placing}.${
         speakConviction
@@ -233,7 +242,7 @@ export async function writeCoverNote(args: {
         messages: [
           {
             role: "user",
-            content: `<full_note ticker="${args.ticker}">\n${args.fullNoteMarkdown}\n</full_note>\n\n${kindNote}\n${attachNote}${funnelNote ? `\n${funnelNote}` : ""}\n\n${repairNote}Write the morning email (subject + body).`,
+            content: `<full_note ticker="${args.ticker}">\n${args.fullNoteMarkdown}\n</full_note>\n\n${kindNote}\n${attachNote}${funnelNote ? `\n${funnelNote}` : ""}${holdcoNote ? `\n${holdcoNote}` : ""}\n\n${repairNote}Write the morning email (subject + body).`,
           },
         ],
       });
@@ -254,6 +263,13 @@ export async function writeCoverNote(args: {
       if (!subject || body.length < 150) return null; // too thin to trust — fall back
 
       const issues = coverNoteRegisterIssues(subject, body, Boolean(args.isReview));
+      // Rule 5 (July 17): the email's discount words must match the computed
+      // class — same deterministic map as the memo's word gate.
+      if (args.holdco) {
+        issues.push(
+          ...holdcoAdjectiveIssues(`${subject}\n${body}`, args.holdco.discountClass, args.holdco.discountPct),
+        );
+      }
       if (issues.length === 0) return { subject, body };
       console.warn(`Cover-note register issues (attempt ${attempt + 1}):`, issues);
       repairNote = `IMPORTANT — your previous draft broke the register. Fix every item:\n${issues

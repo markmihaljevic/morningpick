@@ -76,6 +76,8 @@ export function buildMemoUserPrompt(args: {
   computedFigures?: ComputedFigure[];
   /** The sector-aware comp table block (lib/comp-table.ts textForPrompt). */
   peerComps?: string;
+  /** Investment-holdco NAV frame block (lib/holdco.ts holdcoPromptBlock). */
+  holdcoBlock?: string;
 }): string {
   const { profile, ticker, companyName, data, today, selectionRationale } = args;
 
@@ -209,6 +211,10 @@ ${
           .join("\n")}\n</reference_links>\n\n`
       : ""
   }${briefBlock}${portfolioBlock}${learningBlock}${coverageBlock}${followupBlock}${secondLookBlock}${reviewBlock}${
+    args.holdcoBlock
+      ? `<holdco_valuation_frame note="This name is an INVESTMENT HOLDING COMPANY — the desk computed the NAV frame below. It overrides the default multiple framing.">\n${args.holdcoBlock}\n</holdco_valuation_frame>\n\n`
+      : ""
+  }${
     args.review
       ? ""
       : `Chosen ticker: ${ticker}${companyName ? ` (${companyName})` : ""}\n`
