@@ -14,7 +14,7 @@ import { verifyMemo, type VerificationResult } from "./verify";
 import { buildComputedFigures } from "./figures";
 import { editMemo } from "./editor";
 import type { ResearchBrief } from "./research";
-import { holdcoPromptBlock, holdcoAdjectiveIssues, type HoldcoContext } from "./holdco";
+import { holdcoPromptBlock, holdcoAdjectiveIssues, holdcoDiscountSignal, type HoldcoContext } from "./holdco";
 
 const MAX_CONTINUATIONS = 5;
 
@@ -438,11 +438,13 @@ export async function generateVerifiedMemo(args: {
   // Rule 5 (July 17): words trace to numbers. The deterministic adjective
   // gate rides INSIDE the verify loop — a mismatch is a critical issue the
   // regen machinery repairs, exactly like a wrong figure.
+  const discountSignal = args.review ? null : holdcoDiscountSignal(args.holdco);
   const wordGate = (markdown: string): { claim: string; problem: string }[] =>
-    args.holdco?.liveNav && !args.review
-      ? holdcoAdjectiveIssues(markdown, args.holdco.liveNav.discountClass, args.holdco.liveNav.discountPct).map(
-          (p) => ({ claim: "valuation adjective", problem: p }),
-        )
+    discountSignal
+      ? holdcoAdjectiveIssues(markdown, discountSignal.discountClass, discountSignal.discountPct).map((p) => ({
+          claim: "valuation adjective",
+          problem: p,
+        }))
       : [];
   const withWordGate = (v: VerificationResult, markdown: string): VerificationResult => {
     const word = wordGate(markdown);
@@ -486,22 +488,23 @@ export async function generateVerifiedMemo(args: {
   }
   let meta = await extractMemoMeta(memo.markdown);
   // Rule 5 (July 17): the meta rides to the reader (tear-sheet thesis line,
-  // scenario box, cover fallback) — it passes the same word gate as the body.
-  if (meta && args.holdco?.liveNav && !args.review) {
+  // scenario box, cover fallback) — it passes the same word gate as the body,
+  // on WHICHEVER discount basis is live (look-through or published).
+  if (meta && discountSignal) {
     const metaText = [meta.one_liner, meta.scenarios?.bear, meta.scenarios?.base, meta.scenarios?.bull]
       .filter(Boolean)
       .join("\n");
-    const metaIssues = holdcoAdjectiveIssues(metaText, args.holdco.liveNav.discountClass, args.holdco.liveNav.discountPct);
+    const metaIssues = holdcoAdjectiveIssues(metaText, discountSignal.discountClass, discountSignal.discountPct);
     if (metaIssues.length > 0) {
       console.warn(`Meta word-gate issues for ${args.ticker} — re-extracting once:`, metaIssues);
       meta = await extractMemoMeta(
-        `${memo.markdown}\n\n<!-- REPAIR: your previous extraction broke the discount register: ${metaIssues.join("; ")} — the computed class is "${args.holdco.liveNav.discountClass}". -->`,
+        `${memo.markdown}\n\n<!-- REPAIR: your previous extraction broke the discount register: ${metaIssues.join("; ")} — the computed class is "${discountSignal.discountClass}". -->`,
       );
       if (meta) {
         const still = holdcoAdjectiveIssues(
           [meta.one_liner, meta.scenarios?.bear, meta.scenarios?.base, meta.scenarios?.bull].filter(Boolean).join("\n"),
-          args.holdco.liveNav.discountClass,
-          args.holdco.liveNav.discountPct,
+          discountSignal.discountClass,
+          discountSignal.discountPct,
         );
         if (still.length > 0) meta = null; // correct-or-nothing: no meta beats a wrong adjective
       }

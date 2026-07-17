@@ -91,6 +91,27 @@ export interface HoldcoContext {
 
 export type DiscountClass = "wide" | "modest" | "near" | "premium";
 
+/**
+ * The one discount number the words must trace to, whichever frame is live:
+ * the LIVE look-through discount when marking succeeded, else the discount to
+ * the PUBLISHED NAV (dated). The word gates bind to THIS — on the degraded
+ * frame the strip still prints a computed "Disc. to pub. NAV X%", and "wide"
+ * over an 8% published gap is exactly the failure the rules target.
+ */
+export function holdcoDiscountSignal(
+  ctx: HoldcoContext | null | undefined,
+): { discountPct: number; discountClass: DiscountClass; basis: "live" | "published" } | null {
+  if (!ctx) return null;
+  if (ctx.liveNav) {
+    return { discountPct: ctx.liveNav.discountPct, discountClass: ctx.liveNav.discountClass, basis: "live" };
+  }
+  if (ctx.publishedListing) {
+    const pct = (1 - ctx.publishedListing.pToNav) * 100;
+    return { discountPct: pct, discountClass: discountClass(pct), basis: "published" };
+  }
+  return null;
+}
+
 /** Rule 3: adjectives bind to thresholds — config, not vibes. */
 export function discountClass(discountPct: number): DiscountClass {
   const cfg = config();
@@ -620,6 +641,12 @@ export function holdcoPromptBlock(ctx: HoldcoContext): string {
           : ""
       } as of ${f.publishedNav.asOf} — state the date plainly.`,
     );
+    if (ctx.publishedListing) {
+      const pct = (1 - ctx.publishedListing.pToNav) * 100;
+      lines.push(
+        `At today's price that is ${ctx.publishedListing.pToNav.toFixed(2)}x the published NAV (${ctx.publishedListing.perShare.toFixed(2)}/share, listing terms) — a ${pct.toFixed(0)}% ${pct >= 0 ? "discount" : "premium"} on the ${ctx.publishedListing.asOf} basis. The REQUIRED adjective class is "${discountClass(pct)}" — phrase it as ${DISCOUNT_CLASS_PHRASE[discountClass(pct)]}, dated. Never a stronger word than the computed number supports.`,
+      );
+    }
   }
   return lines.join("\n");
 }

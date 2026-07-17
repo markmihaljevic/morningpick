@@ -51,6 +51,16 @@ export function mergeProfileUpdates(
     if (Array.isArray(value)) {
       const existing = Array.isArray(merged[key]) ? (merged[key] as unknown[]) : [];
       merged[key] = [...new Set([...existing, ...value].map((v) => String(v)))];
+    } else if (typeof value === "object" && (key === "factor_weights" || key === "valuation_metrics")) {
+      // Scoring dials COMPOSE across replies (July 16 rule 2): "ignore
+      // growth" today must not erase "capital discipline up" from last week.
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (entries.length === 0) continue; // an empty dial object is a no-op, never a reset
+      const existing =
+        merged[key] && typeof merged[key] === "object" && !Array.isArray(merged[key])
+          ? (merged[key] as Record<string, unknown>)
+          : {};
+      merged[key] = { ...existing, ...(value as Record<string, unknown>) };
     } else {
       merged[key] = value;
     }

@@ -75,6 +75,9 @@ export async function verifyMemo(
     priorReviews?: { date: string; headline: string; action: string }[];
     /** Investment-holdco NAV frame (desk-computed) — ground truth + framing rules. */
     holdcoBlock?: string;
+    /** An ALREADY-VERIFIED source note the memo distils (page one's contract
+     * lets the writer reuse its figures) — a figure present here is valid. */
+    referenceNote?: string;
   },
 ): Promise<VerificationResult> {
   // Review-only discipline (John, July 14) rides in the USER message so the
@@ -113,6 +116,9 @@ export async function verifyMemo(
               : "") +
             (opts?.holdcoBlock
               ? `<holdco_nav_frame note="desk-computed NAV frame for this investment holding company — GROUND TRUTH, and IN-SCOPE framing checks per the review-discipline exception. Flag as CRITICAL: (a) any NAV, discount, or per-share figure contradicting these computed values; (b) a valuation adjective (wide/modest/near NAV/premium) that contradicts the stated discount class; (c) consolidated P/E or EV/EBITDA of fair-value earnings LEADING the title or thesis, or appearing without the revaluation-driven label; (d) any hedge like 'cannot verify a live discount' when the live computation is right here.">\n${opts.holdcoBlock}\n</holdco_nav_frame>\n\n`
+              : "") +
+            (opts?.referenceNote
+              ? `<verified_source_note note="the ALREADY fact-checked note this memo distils — a figure that appears in it is VALID even when the dataset lacks it; do not dispute figures you can see here.">\n${opts.referenceNote}\n</verified_source_note>\n\n`
               : "") +
             reviewRules +
             `<memo>\n${markdown}\n</memo>`,

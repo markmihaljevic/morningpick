@@ -296,6 +296,9 @@ export function fallbackCoverBody(args: {
   oneLiner: string | null | undefined;
   onePager: boolean;
   fullReport: boolean;
+  /** July 16 funnel facts — the placing line lives ONLY in the email, so the
+   * fallback must carry it deterministically or it vanishes without trace. */
+  funnel?: { rank: number | null; cleared: number; blockedAhead: number } | null;
 }): string {
   const attachLine =
     args.onePager && args.fullReport
@@ -316,7 +319,19 @@ export function fallbackCoverBody(args: {
   // boilerplate, which is what happened to the BARC demo).
   const oneLiner = args.oneLiner?.trim();
   const safeOneLiner = oneLiner && exactDecimalFigures(oneLiner).length === 0 ? oneLiner : "My latest idea for you.";
-  return attachLine ? `${safeOneLiner}\n\n${attachLine}` : safeOneLiner;
+  // The placing line, deterministic — the same sentence the writer would
+  // have carried, so a failed cover never silently drops the funnel promise.
+  const f = args.funnel;
+  const placingLine =
+    f && f.cleared > 0
+      ? (f.rank ?? 1) <= 1
+        ? `It is the first of the ${f.cleared} names that cleared your filters this morning.`
+        : `It is the top name standing of the ${f.cleared} that cleared your filters this morning${
+            f.blockedAhead > 0 ? `, after ${f.blockedAhead} you already hold` : ""
+          }.`
+      : "";
+  const lead = placingLine ? `${safeOneLiner} ${placingLine}` : safeOneLiner;
+  return attachLine ? `${lead}\n\n${attachLine}` : lead;
 }
 
 /** One walk skip, as logged by the funnel — input to the empty-funnel note. */

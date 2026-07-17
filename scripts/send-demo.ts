@@ -26,7 +26,7 @@ import { greetingName } from "../lib/greeting";
 import { buildTearSheet } from "../lib/tear-sheet";
 import { buildFullReport } from "../lib/full-report";
 import { buildCompTable } from "../lib/comp-table";
-import { getHoldcoContext } from "../lib/holdco";
+import { getHoldcoContext, holdcoDiscountSignal } from "../lib/holdco";
 import { writeCoverNote, fallbackCoverBody, writeNoIdeaNote, fallbackNoIdeaBody, bareTicker } from "../lib/cover-note";
 import { normalizeCompanyName } from "../lib/company-key";
 import { config } from "../lib/config";
@@ -407,9 +407,7 @@ async function main() {
     isReview: memoKind === "review",
     attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
     funnel: memoKind === "idea" || memoKind === "second_look" ? funnelContext : undefined,
-    holdco: holdcoCtx?.liveNav
-      ? { discountPct: holdcoCtx.liveNav.discountPct, discountClass: holdcoCtx.liveNav.discountClass }
-      : null,
+    holdco: holdcoDiscountSignal(holdcoCtx),
   });
   const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
   const coverSubject =

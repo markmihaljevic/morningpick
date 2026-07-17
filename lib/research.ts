@@ -3,6 +3,7 @@ import { anthropic } from "./anthropic";
 import { config } from "./config";
 import { db } from "./db";
 import type { TickerData } from "./fmp";
+import { sanitizeDatasetForPrompt } from "./figures";
 
 /**
  * The shared research layer: one sourced, verified fact base per ticker per
@@ -72,7 +73,7 @@ export async function buildResearchBrief(
       content:
         `Today's date: ${new Date().toISOString().slice(0, 10)}\n` +
         `Ticker: ${ticker}${companyName ? ` (${companyName})` : ""}\n\n` +
-        `<dataset>\n${JSON.stringify(data)}\n</dataset>\n\n` +
+        `<dataset note="vendor-precomputed price ratios stripped — never cite a P/E, P/B, or yield from memory; the memo layer computes them fresh">\n${JSON.stringify(sanitizeDatasetForPrompt(data))}\n</dataset>\n\n` +
         `Prepare the research brief. Use at most 4 searches and 4 fetches on what matters most.`,
     },
   ];

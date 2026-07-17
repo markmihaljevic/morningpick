@@ -17,7 +17,7 @@ import { greetingName } from "@/lib/greeting";
 import { buildTearSheet } from "@/lib/tear-sheet";
 import { buildFullReport } from "@/lib/full-report";
 import { buildCompTable } from "@/lib/comp-table";
-import { getHoldcoContext } from "@/lib/holdco";
+import { getHoldcoContext, holdcoDiscountSignal } from "@/lib/holdco";
 import { identityFromProfile, normalizeCompanyName } from "@/lib/company-key";
 import { writeCoverNote, fallbackCoverBody, writeNoIdeaNote, fallbackNoIdeaBody, bareTicker } from "@/lib/cover-note";
 import {
@@ -460,7 +460,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
   // Idempotency: a memo row may exist from a previous crashed attempt.
   const { data: existingMemo } = await db()
     .from("memos")
-    .select("id, content_html, ticker, title, sent_at, reply_address")
+    .select("id, content_html, content_md, ticker, title, kind, sent_at, reply_address, extras")
     .eq("subscriber_id", subscriber.id)
     .eq("delivery_date", delivery.delivery_date)
     .maybeSingle();
@@ -494,6 +494,46 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
     html = existingMemo.content_html;
     ticker = existingMemo.ticker;
     title = existingMemo.title ?? `${ticker} — today's idea`;
+    // The stored cover body promises whatever was attached when it was
+    // written — rebuild the full report from the stored artifacts so the
+    // promise holds (a crash between insert and send previously shipped
+    // "the full report is attached" with nothing attached). The one-pager
+    // is an LLM build and is NOT recreated here; its absence matches the
+    // cover's degraded report-only phrasing often enough, and the event
+    // below makes any residual mismatch visible.
+    if (existingMemo.kind !== "review" && existingMemo.kind !== "no_idea" && existingMemo.content_md) {
+      try {
+        const extras = (existingMemo.extras ?? {}) as {
+          meta?: import("@/lib/memo").MemoMeta | null;
+          sources?: { url: string; title: string }[];
+          dateLine?: string;
+        };
+        const data = await fetchTickerData(ticker);
+        const compTable = await buildCompTable({ ticker, data });
+        fullReport = await buildFullReport({
+          markdown: existingMemo.content_md as string,
+          ticker,
+          dateLine:
+            extras.dateLine ??
+            new Date(delivery.delivery_date + "T00:00:00Z").toLocaleDateString("en-GB", {
+              day: "numeric",
+              month: "long",
+              year: "numeric",
+              timeZone: "UTC",
+            }),
+          data,
+          meta: extras.meta ?? null,
+          sources: extras.sources ?? [],
+          compTable,
+        });
+      } catch (e) {
+        console.error(`Reuse-path report rebuild failed for ${ticker} (sending without):`, e);
+      }
+      await logEvent("memo_reuse_resend", {
+        subscriberId: subscriber.id,
+        payload: { memoId, ticker, rebuiltReport: fullReport !== null },
+      });
+    }
   } else {
     // The analyst's memory: recent notes with live returns + subscriber
     // reactions. Needed on every path (book strip); quotes are day-cached.
@@ -737,9 +777,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       isReview: memoKind === "review",
       attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
       funnel: memoKind === "idea" || memoKind === "second_look" ? plan.funnelContext : undefined,
-      holdco: holdcoCtx?.liveNav
-        ? { discountPct: holdcoCtx.liveNav.discountPct, discountClass: holdcoCtx.liveNav.discountClass }
-        : null,
+      holdco: holdcoDiscountSignal(holdcoCtx),
     });
     const hook = h1Title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
     // Rule 4: the subject says what the email IS — reviews lead "Your book —";
@@ -749,6 +787,15 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       (memoKind === "review"
         ? `Your book — ${hook || "today's read-through"}`
         : `${bareTicker(ticker)}: ${hook || "today's idea"}`);
+    if (!cover) {
+      // Degradations must be VISIBLE (sibling events: verify_failopen,
+      // empty_funnel) — a fallback cover loses the crafted note and, without
+      // the funnel arg below, would silently drop the placing line too.
+      await logEvent("cover_fallback", {
+        subscriberId: subscriber.id,
+        payload: { ticker, kind: memoKind, hadFunnel: Boolean(plan.funnelContext) },
+      });
+    }
     const coverBody =
       cover?.body ||
       fallbackCoverBody({
@@ -756,6 +803,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
         oneLiner: memo.meta?.one_liner,
         onePager: tearSheet !== null,
         fullReport: fullReport !== null,
+        funnel: memoKind === "idea" || memoKind === "second_look" ? plan.funnelContext : null,
       });
     title = coverSubject; // the DB title + email subject = what the reader saw
 
