@@ -146,7 +146,7 @@ Rules:
 - per_share_currency states EXACTLY which currency per_share is quoted in (a company may publish GEL 154.7 or the GBP equivalent — say which one you are returning).
 - cross_at_mark DIRECTION: units of the stake's value currency per ONE unit of the SUBJECT's listing currency (e.g. GEL per GBP = 3.573). Never the inverse.
 - listed_stakes: ONLY stakes with a real public listing; include the company-disclosed value in the subject's listing currency (value_listing_ccy_at_mark, millions) or the company's own cross rate at the mark when the disclosure states one.
-- Use the LATEST disclosed figures; if a later share-count change (buyback, trim) is disclosed, use the disclosed count and cite it.
+- Use the LATEST disclosed figures — holdcos that publish quarterly NAV statements or trading updates: you MUST check for a statement NEWER than the last annual results (a Q1 trading update supersedes the FY RNS) and use that one. If a later share-count change (buyback, trim) is disclosed, use the disclosed count and cite it.
 - Numbers only from disclosures you actually found — null over guess, always.
 - Work FAST: prefer search-result snippets, NAV announcements, and results press releases over fetching large documents; fetch at most the one or two pages that state the NAV and the stakes.`;
 
