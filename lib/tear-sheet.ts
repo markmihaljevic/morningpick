@@ -3,6 +3,7 @@ import { renderToBuffer, type DocumentProps } from "@react-pdf/renderer";
 import { TearSheet } from "./pdf/tear-sheet";
 import { buildStatStrip } from "./stats";
 import { buildComputedFigures, buildSnapshot } from "./figures";
+import { snapshotReconcileInputs } from "./reconcile";
 import { writePageOneMemo } from "./page-one";
 import { config } from "./config";
 import type { TickerData } from "./fmp";
@@ -35,6 +36,9 @@ export async function buildTearSheet(args: {
   /** Investment-holdco NAV frame (July 17): NAV-led strip, and the page-one
    * fact-check gets the computed bridge as ground truth. */
   holdco?: HoldcoContext | null;
+  /** July 18 rule 4: the desk's one conviction — every N/10 on the page must
+   * equal it; figures must reconcile to the equity snapshot. */
+  conviction?: number | null;
 }): Promise<Buffer | null> {
   try {
     const p = (Array.isArray(args.data.profile) ? args.data.profile[0] : args.data.profile) as
@@ -59,6 +63,8 @@ export async function buildTearSheet(args: {
       peers: args.peers ?? [],
       peerComps: args.peerComps,
       holdco: args.holdco,
+      reconcile: snapshotReconcileInputs(snapshot, args.conviction ?? null, args.peerComps),
+      financialGroup: snapshot.financialGroup,
     });
     if (!pageOne) {
       console.warn(`No page-one memo for ${args.ticker}; sending the full report alone.`);

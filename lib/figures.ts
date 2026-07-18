@@ -1,5 +1,6 @@
 import type { TickerData } from "./fmp";
 import { getFxRate, listingMajor } from "./fx";
+import { isBalanceSheetBusiness } from "./metric-groups";
 
 export interface ComputedFigure {
   label: string;
@@ -40,7 +41,23 @@ export interface FiguresSnapshot {
   balanceSheetDate: string | null;
   totalDebt: number | null;
   cashAndDeposits: number | null; // cash + short-term investments
-  tangibleBookAbs: number | null; // total equity − goodwill − intangibles
+  // ONE equity snapshot (John's July 18 rule 1): common equity = total
+  // shareholders' equity − preferred; tangible common = − goodwill −
+  // intangibles. Minority interest NEVER enters any per-share figure,
+  // multiple, or prose claim (RNR: FMP's totalEquity 18.56B carried 7.04B
+  // of third-party DaVinci/Medici capital → a $383.51 vendor "TBV/share").
+  minorityInterest: number | null;
+  preferredEquity: number | null; // 0 when the statement carries none
+  commonEquity: number | null; // total SE − preferred
+  tangibleBookAbs: number | null; // TANGIBLE COMMON: common equity − goodwill − intangibles
+  /** The preferred-in variant (total SE − intangibles) — printable ONLY as a
+   * labeled aside next to the canonical ex-preferred figure. */
+  tangibleBookInclPref: number | null;
+  pTangibleBookInclPref: number | null;
+  /** True → deposit/float-funded group (banks, insurers, capital markets,
+   * specialty credit): NO EV, net debt, or net cash lines anywhere — the
+   * investment portfolio is float backing reserves, not spare cash. */
+  financialGroup: boolean;
   ebitdaTTM: number | null; // derived from kt's own EV/EBITDA pair — one epoch
   /** False → no usable balance sheet; EV figures degrade to vendor data and
    * every surface that prints them must say so. */
@@ -214,28 +231,48 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
     if (cash === null && sti === null) return n(bsSafe?.cashAndShortTermInvestments);
     return (cash ?? 0) + (sti ?? 0);
   })();
-  const tangibleBookAbs = ((): number | null => {
-    const equity = n(bsSafe?.totalStockholdersEquity) ?? n(bsSafe?.totalEquity);
-    if (equity === null) return null;
-    // FMP sometimes serves the combined field as 0 while the components carry
-    // real values — take the LARGER of combined vs sum, never let a zeroed
-    // combined field overstate tangible book (the page's headline multiple).
+  // ONE equity snapshot (John's July 18 rule 1). FMP's totalStockholdersEquity
+  // EXCLUDES minority interest but INCLUDES preferred; totalEquity includes
+  // BOTH (RNR: 18.56B total, of which 7.04B is third-party DaVinci/Medici
+  // capital and 0.75B preferred — the vendor's "TBV/share" of $383.51 was
+  // computed off the MI-polluted total). Minority interest never enters any
+  // per-share figure or multiple.
+  const minorityInterest = n(bsSafe?.minorityInterest);
+  const preferredEquity = bsSafe !== null ? (n(bsSafe?.preferredStock) ?? 0) : null;
+  const totalSEInclPref = ((): number | null => {
+    const se = n(bsSafe?.totalStockholdersEquity);
+    if (se !== null) return se;
+    const total = n(bsSafe?.totalEquity);
+    if (total !== null) return total - (minorityInterest ?? 0);
+    return null;
+  })();
+  const commonEquity =
+    totalSEInclPref !== null && preferredEquity !== null ? totalSEInclPref - preferredEquity : null;
+  // FMP sometimes serves the combined field as 0 while the components carry
+  // real values — take the LARGER of combined vs sum, never let a zeroed
+  // combined field overstate tangible book (the page's headline multiple).
+  const intangiblesTotal = ((): number => {
     const combined = n(bsSafe?.goodwillAndIntangibleAssets) ?? 0;
     const summed = (n(bsSafe?.goodwill) ?? 0) + (n(bsSafe?.intangibleAssets) ?? 0);
-    return equity - Math.max(combined, summed);
+    return Math.max(combined, summed);
   })();
+  // Canonical tangible book = TANGIBLE COMMON EQUITY (ex-preferred, ex-MI).
+  const tangibleBookAbs = commonEquity !== null ? commonEquity - intangiblesTotal : null;
+  // The preferred-in variant — printable only as a labeled aside (RNR: 1.49x
+  // vs the canonical 1.62x).
+  const tangibleBookInclPref = totalSEInclPref !== null ? totalSEInclPref - intangiblesTotal : null;
 
-  const pb = over(rt.bookValuePerShareTTM);
-  const pTangibleBook = ((): number | null => {
-    // Canonical: market cap over (equity − goodwill − intangibles), both in
-    // reported currency — market cap at today's close, book at the statement.
-    if (mcapRep !== null && tangibleBookAbs !== null && tangibleBookAbs > 0) {
-      return mcapRep / tangibleBookAbs;
-    }
-    const v = over(rt.tangibleBookValuePerShareTTM);
-    if (v !== null && v > 0) return v;
-    return null; // no vendor-epoch fallback — recompute or don't print
-  })();
+  // P/B and P/TBV from the SAME numerators — market cap at today's close in
+  // reported currency over the equity snapshot. No vendor per-share fields,
+  // ever (deleted: over(bookValuePerShareTTM) and the tangible vendor branch).
+  const pb =
+    mcapRep !== null && commonEquity !== null && commonEquity > 0 ? mcapRep / commonEquity : null;
+  const pTangibleBook =
+    mcapRep !== null && tangibleBookAbs !== null && tangibleBookAbs > 0 ? mcapRep / tangibleBookAbs : null;
+  const pTangibleBookInclPref =
+    mcapRep !== null && tangibleBookInclPref !== null && tangibleBookInclPref > 0
+      ? mcapRep / tangibleBookInclPref
+      : null;
   const ps = ((): number | null => {
     const v = over(rt.revenuePerShareTTM);
     return v !== null && v > 0 ? v : null;
@@ -351,7 +388,16 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
     balanceSheetDate,
     totalDebt,
     cashAndDeposits,
+    minorityInterest,
+    preferredEquity,
+    commonEquity,
     tangibleBookAbs,
+    tangibleBookInclPref,
+    pTangibleBookInclPref,
+    financialGroup: isBalanceSheetBusiness(
+      typeof profile.industry === "string" ? profile.industry : undefined,
+      typeof profile.sector === "string" ? profile.sector : undefined,
+    ),
     ebitdaTTM,
     evFromBalanceSheet,
     priceFresh,
@@ -376,8 +422,15 @@ export async function snapshotFromParts(parts: SnapshotParts): Promise<FiguresSn
     currentRatio: n(rt.currentRatioTTM) ?? n(ra.currentRatio),
     debtToEquity: n(rt.debtToEquityRatioTTM) ?? n(ra.debtToEquityRatio),
     interestCoverage: n(rt.interestCoverageRatioTTM) ?? n(ra.interestCoverageRatio),
-    bookValuePerShare: n(rt.bookValuePerShareTTM) ?? n(ra.bookValuePerShare),
-    tangibleBookPerShare: n(rt.tangibleBookValuePerShareTTM) ?? n(ra.tangibleBookValuePerShare),
+    // Per-share book values DERIVED from the multiples (priceRep / multiple),
+    // so price ÷ per-share ≡ the printed multiple by construction, in
+    // REPORTED currency to match the repCur label (the listing price would
+    // land in pence on GBp names — the THX.L unit class). Vendor per-share
+    // fields are gone: FMP's tangibleBookValuePerShareTTM carried minority
+    // interest and printed $383.51 for a $200 book (RNR).
+    bookValuePerShare: priceRep !== null && pb !== null && pb > 0 ? priceRep / pb : null,
+    tangibleBookPerShare:
+      priceRep !== null && pTangibleBook !== null && pTangibleBook > 0 ? priceRep / pTangibleBook : null,
     cashPerShare: n(rt.cashPerShareTTM) ?? n(ra.cashPerShare),
     fcfPerShare: n(rt.freeCashFlowPerShareTTM) ?? n(ra.freeCashFlowPerShare),
     eps: n(inc0.eps),
@@ -450,33 +503,72 @@ export async function buildComputedFigures(data: TickerData): Promise<ComputedFi
   );
   // Market cap is in MAJOR units even when the price quotes in pence.
   push("Market cap", fmtMoney(s.marketCap, s.listCurMajor));
-  // EV without a balance sheet is vendor-derived — say so where it prints, so
-  // the writer never asserts a "true EV" the statement never backed.
-  const evLabel = s.evFromBalanceSheet
-    ? "Enterprise value"
-    : "Enterprise value (vendor approximation — no recent balance sheet)";
-  push(evLabel, fmtMoney(s.enterpriseValue, s.repCur));
-  if (s.netDebt !== null) {
-    const ndLabel = s.evFromBalanceSheet ? "Net debt" : "Net debt (vendor approximation)";
-    push(ndLabel, s.netDebt < 0 ? `net cash ${fmtMoney(-s.netDebt, s.repCur)}` : fmtMoney(s.netDebt, s.repCur));
-  }
-  push("Net debt / EBITDA", s.netDebtToEbitda !== null ? `${s.netDebtToEbitda.toFixed(2)}x` : null);
-  // Balance-sheet components — the note names the statement date with these.
-  if (s.balanceSheetDate) {
-    push("Balance sheet date", s.balanceSheetDate);
-    push("Cash + short-term investments", fmtMoney(s.cashAndDeposits, s.repCur));
-    push("Total debt", fmtMoney(s.totalDebt, s.repCur));
-    push("Tangible book (equity − goodwill − intangibles)", fmtMoney(s.tangibleBookAbs, s.repCur));
+  if (s.financialGroup) {
+    // Equity-base rules for financials (John, July 18): no EV, no net debt,
+    // no net cash — an insurer's investment portfolio is float backing
+    // policyholder reserves, not spare cash; the EV recipe applies only to
+    // non-financial operating companies. The dated equity bridge replaces it.
+    if (s.balanceSheetDate) {
+      push("Balance sheet date", s.balanceSheetDate);
+      push(
+        "Equity bridge note",
+        "float-funded balance sheet: enterprise value, net debt, and net cash are NOT meaningful and must not appear in the note",
+      );
+      if (s.minorityInterest !== null && s.minorityInterest > 0) {
+        push(
+          "Minority interest (EXCLUDED from every figure)",
+          fmtMoney(s.minorityInterest, s.repCur),
+        );
+      }
+      if (s.preferredEquity !== null && s.preferredEquity > 0) {
+        push("Preferred equity (excluded from common)", fmtMoney(s.preferredEquity, s.repCur));
+      }
+      push("Common equity (total SE − preferred)", fmtMoney(s.commonEquity, s.repCur));
+      push("Tangible common equity (− goodwill − intangibles)", fmtMoney(s.tangibleBookAbs, s.repCur));
+    }
+  } else {
+    // EV without a balance sheet is vendor-derived — say so where it prints, so
+    // the writer never asserts a "true EV" the statement never backed.
+    const evLabel = s.evFromBalanceSheet
+      ? "Enterprise value"
+      : "Enterprise value (vendor approximation — no recent balance sheet)";
+    push(evLabel, fmtMoney(s.enterpriseValue, s.repCur));
+    if (s.netDebt !== null) {
+      const ndLabel = s.evFromBalanceSheet ? "Net debt" : "Net debt (vendor approximation)";
+      push(ndLabel, s.netDebt < 0 ? `net cash ${fmtMoney(-s.netDebt, s.repCur)}` : fmtMoney(s.netDebt, s.repCur));
+    }
+    push("Net debt / EBITDA", s.netDebtToEbitda !== null ? `${s.netDebtToEbitda.toFixed(2)}x` : null);
+    // Balance-sheet components — the note names the statement date with these.
+    if (s.balanceSheetDate) {
+      push("Balance sheet date", s.balanceSheetDate);
+      push("Cash + short-term investments", fmtMoney(s.cashAndDeposits, s.repCur));
+      push("Total debt", fmtMoney(s.totalDebt, s.repCur));
+      push("Tangible book (common equity − goodwill − intangibles)", fmtMoney(s.tangibleBookAbs, s.repCur));
+    }
   }
 
   push("P/E", fmtX(s.pe));
-  push("EV/EBITDA", fmtX(s.evEbitda));
-  push("P/B", fmtX(s.pb));
-  push("P/tangible book", fmtX(s.pTangibleBook));
+  if (!s.financialGroup) push("EV/EBITDA", fmtX(s.evEbitda));
+  push("P/B (on common equity)", fmtX(s.pb));
+  push("P/tangible book (on tangible common equity)", fmtX(s.pTangibleBook));
+  if (
+    s.financialGroup &&
+    s.pTangibleBookInclPref !== null &&
+    s.preferredEquity !== null &&
+    s.preferredEquity > 0
+  ) {
+    push("P/tangible book incl. preferred (labeled aside only)", fmtX(s.pTangibleBookInclPref));
+  }
+  // RoTE for float/deposit businesses — return on the same tangible common base.
+  if (s.financialGroup && s.roe !== null && s.commonEquity !== null && s.tangibleBookAbs !== null && s.tangibleBookAbs > 0) {
+    push("RoTE (ROE × common/tangible common)", fmtPct(s.roe * (s.commonEquity / s.tangibleBookAbs)));
+  }
   push("P/S", fmtX(s.ps));
-  push("P/FCF", fmtX(s.pfcf));
+  if (!s.financialGroup) {
+    push("P/FCF", fmtX(s.pfcf));
+  }
   push("Earnings yield", fmtPct(s.earningsYield));
-  push("FCF yield", fmtPct(s.fcfYield));
+  if (!s.financialGroup) push("FCF yield", fmtPct(s.fcfYield));
   push("Dividend yield", fmtPct(s.divYield));
   push("Payout ratio", fmtPct(s.payoutRatio));
 
@@ -494,10 +586,12 @@ export async function buildComputedFigures(data: TickerData): Promise<ComputedFi
   push("Debt / equity", s.debtToEquity !== null ? `${s.debtToEquity.toFixed(2)}x` : null);
   push("Interest coverage", fmtX(s.interestCoverage));
 
-  push("Book value / share", fmtShare(s.bookValuePerShare, s.repCur));
-  push("Tangible book / share", fmtShare(s.tangibleBookPerShare, s.repCur));
-  push("Cash / share", fmtShare(s.cashPerShare, s.repCur));
-  push("FCF / share", fmtShare(s.fcfPerShare, s.repCur));
+  push("Book value / share (common)", fmtShare(s.bookValuePerShare, s.repCur));
+  push("Tangible book / share (tangible common)", fmtShare(s.tangibleBookPerShare, s.repCur));
+  if (!s.financialGroup) {
+    push("Cash / share", fmtShare(s.cashPerShare, s.repCur));
+    push("FCF / share", fmtShare(s.fcfPerShare, s.repCur));
+  }
   push("EPS", fmtShare(s.eps, s.repCur));
 
   if (s.price !== null && s.yearLow !== null && s.yearHigh !== null && s.yearLow > 0 && s.yearHigh > s.yearLow) {
@@ -543,21 +637,30 @@ const BANNED_TTM_RATIO_FIELDS = [
   "priceToBookRatioTTM", "priceToSalesRatioTTM", "priceToFreeCashFlowRatioTTM",
   "priceToOperatingCashFlowRatioTTM", "dividendYieldTTM", "priceToFairValueTTM",
   "debtToMarketCapTTM", "enterpriseValueMultipleTTM",
+  // Vendor per-share book fields (July 18): FMP computes these off totalEquity
+  // INCLUDING minority interest — RNR's "$383.51 tangible book/share" against
+  // a true ~$200. The models never see them; per-share book comes only from
+  // computed_figures (priceRep / our own multiple).
+  "bookValuePerShareTTM", "tangibleBookValuePerShareTTM", "shareholdersEquityPerShareTTM",
 ];
 const BANNED_TTM_KM_FIELDS = [
   "marketCap", "enterpriseValueTTM", "evToSalesTTM", "evToOperatingCashFlowTTM",
   "evToFreeCashFlowTTM", "evToEBITDATTM", "netDebtToEBITDATTM", "earningsYieldTTM",
   "freeCashFlowYieldTTM", "grahamNumberTTM", "grahamNetNetTTM",
+  // Vendor absolute book values with the same MI pollution.
+  "tangibleAssetValueTTM", "netCurrentAssetValueTTM",
 ];
 const BANNED_ANNUAL_RATIO_FIELDS = [
   "priceToEarningsRatio", "priceToEarningsGrowthRatio", "forwardPriceToEarningsGrowthRatio",
   "priceToBookRatio", "priceToSalesRatio", "priceToFreeCashFlowRatio",
   "priceToOperatingCashFlowRatio", "dividendYield", "dividendYieldPercentage",
   "priceToFairValue", "debtToMarketCap", "enterpriseValueMultiple",
+  "bookValuePerShare", "tangibleBookValuePerShare", "shareholdersEquityPerShare",
 ];
 const BANNED_ANNUAL_KM_FIELDS = [
   "marketCap", "enterpriseValue", "evToSales", "evToOperatingCashFlow", "evToFreeCashFlow",
   "evToEBITDA", "netDebtToEBITDA", "earningsYield", "freeCashFlowYield", "grahamNumber", "grahamNetNet",
+  "tangibleAssetValue", "netCurrentAssetValue",
 ];
 function stripFields(rows: unknown, banned: string[]): unknown {
   const strip = (row: unknown) => {

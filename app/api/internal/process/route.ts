@@ -18,6 +18,8 @@ import { buildTearSheet } from "@/lib/tear-sheet";
 import { buildFullReport } from "@/lib/full-report";
 import { buildCompTable } from "@/lib/comp-table";
 import { getHoldcoContext, holdcoDiscountSignal } from "@/lib/holdco";
+import { buildSnapshot } from "@/lib/figures";
+import { snapshotReconcileInputs } from "@/lib/reconcile";
 import { identityFromProfile, normalizeCompanyName } from "@/lib/company-key";
 import { writeCoverNote, fallbackCoverBody, writeNoIdeaNote, fallbackNoIdeaBody, bareTicker } from "@/lib/cover-note";
 import {
@@ -703,6 +705,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       referenceLinks,
       peerComps: compTable?.textForPrompt,
       holdco: holdcoCtx,
+      conviction: plan.funnelContext?.conviction ?? null,
       light: lightMode,
     });
     const h1Title = memo.title; // "TICKER — hook" — the attached report's title
@@ -753,6 +756,7 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
           peerComps: compTable?.textForPrompt,
           peers: compTable?.rows.filter((r) => !r.self).map((r) => ({ symbol: r.ticker, name: r.name })),
           holdco: holdcoCtx,
+          conviction: plan.funnelContext?.conviction ?? null,
         }),
         // The report carries the full workings: chart, comps, scenarios.
         buildFullReport({
@@ -778,6 +782,16 @@ export async function processDelivery(delivery: DeliveryRow): Promise<void> {
       attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
       funnel: memoKind === "idea" || memoKind === "second_look" ? plan.funnelContext : undefined,
       holdco: holdcoDiscountSignal(holdcoCtx),
+      // Rule 4 (July 18): the email's figures — conviction included — must
+      // match the PDF's; both read from the same snapshot + desk number.
+      reconcile:
+        memoKind === "review"
+          ? null
+          : snapshotReconcileInputs(
+              await buildSnapshot(data),
+              plan.funnelContext?.conviction ?? null,
+              compTable?.textForPrompt,
+            ),
     });
     const hook = h1Title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
     // Rule 4: the subject says what the email IS — reviews lead "Your book —";

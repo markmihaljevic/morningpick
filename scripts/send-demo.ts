@@ -27,6 +27,8 @@ import { buildTearSheet } from "../lib/tear-sheet";
 import { buildFullReport } from "../lib/full-report";
 import { buildCompTable } from "../lib/comp-table";
 import { getHoldcoContext, holdcoDiscountSignal } from "../lib/holdco";
+import { buildSnapshot } from "../lib/figures";
+import { snapshotReconcileInputs } from "../lib/reconcile";
 import { writeCoverNote, fallbackCoverBody, writeNoIdeaNote, fallbackNoIdeaBody, bareTicker } from "../lib/cover-note";
 import { normalizeCompanyName } from "../lib/company-key";
 import { config } from "../lib/config";
@@ -368,6 +370,7 @@ async function main() {
     referenceLinks,
     peerComps: compTable?.textForPrompt,
     holdco: holdcoCtx,
+    conviction: funnelContext?.conviction ?? null,
   });
   console.error(
     `Verification: ${memo.verification.critical_issues.length} critical, ${memo.verification.minor_issues.length} minor issues`,
@@ -391,6 +394,7 @@ async function main() {
             peerComps: compTable?.textForPrompt,
             peers: compTable?.rows.filter((r) => !r.self).map((r) => ({ symbol: r.ticker, name: r.name })),
             holdco: holdcoCtx,
+            conviction: funnelContext?.conviction ?? null,
           }),
           buildFullReport({ markdown: memo.markdown, ticker, companyName, dateLine, data, meta: memo.meta, sources: mergeMemoSources(researchBrief?.sources, memo.sources), compTable }),
         ]);
@@ -408,6 +412,10 @@ async function main() {
     attachments: { onePager: tearSheet !== null, fullReport: fullReport !== null },
     funnel: memoKind === "idea" || memoKind === "second_look" ? funnelContext : undefined,
     holdco: holdcoDiscountSignal(holdcoCtx),
+    reconcile:
+      memoKind === "review" || !data
+        ? null
+        : snapshotReconcileInputs(await buildSnapshot(data), funnelContext?.conviction ?? null, compTable?.textForPrompt),
   });
   const hook = memo.title.replace(/^[^—:-]*[—:-]\s*/, "").trim();
   const coverSubject =

@@ -11,7 +11,8 @@ import {
   type ReviewContext,
 } from "./prompts/memo";
 import { verifyMemo, type VerificationResult } from "./verify";
-import { buildComputedFigures } from "./figures";
+import { buildComputedFigures, buildSnapshot } from "./figures";
+import { snapshotReconcileInputs, reconciliationIssues, narrationIssues } from "./reconcile";
 import { editMemo } from "./editor";
 import type { ResearchBrief } from "./research";
 import { holdcoPromptBlock, holdcoAdjectiveIssues, holdcoDiscountSignal, type HoldcoContext } from "./holdco";
@@ -89,10 +90,13 @@ export async function generateMemo(args: {
   peerComps?: string;
   /** Investment-holdco NAV frame (lib/holdco.ts) — overrides multiple framing. */
   holdco?: HoldcoContext | null;
+  /** The desk's ONE conviction (assessor) — the writer restates it verbatim. */
+  conviction?: number | null;
   /** Final-attempt degradation: fewer tool rounds, no editorial — ship good over perfect. */
   light?: boolean;
 }): Promise<GeneratedMemo> {
   const cfg = config();
+  const snapshot = args.review ? null : await buildSnapshot(args.data);
   const userPrompt = buildMemoUserPrompt({
     profile: args.profile,
     ticker: args.ticker,
@@ -111,6 +115,8 @@ export async function generateMemo(args: {
     computedFigures: args.review ? undefined : await buildComputedFigures(args.data),
     peerComps: args.review ? undefined : args.peerComps,
     holdcoBlock: args.holdco && !args.review ? holdcoPromptBlock(args.holdco) : undefined,
+    financialGroup: snapshot?.financialGroup,
+    conviction: args.conviction,
   });
 
   const baseRequest = {
@@ -425,27 +431,45 @@ export async function generateVerifiedMemo(args: {
   referenceLinks?: { label: string; url: string }[];
   peerComps?: string;
   holdco?: HoldcoContext | null;
+  /** The desk's ONE conviction (assessor) — enforced everywhere it prints. */
+  conviction?: number | null;
   light?: boolean;
 }): Promise<GeneratedMemo & { verification: VerificationResult; meta: MemoMeta | null }> {
   const MAX_REGENS = args.light ? 1 : 2;
   // The same precomputed figures the writer quotes — ground truth for the check.
   const figures = args.review ? [] : await buildComputedFigures(args.data);
+  const gateSnapshot = args.review ? null : await buildSnapshot(args.data);
   const verifyOpts = {
     review: Boolean(args.review),
     priorReviews: args.review?.priorReviews,
     holdcoBlock: args.holdco && !args.review ? holdcoPromptBlock(args.holdco) : undefined,
+    financialGroup: gateSnapshot?.financialGroup ?? false,
   };
-  // Rule 5 (July 17): words trace to numbers. The deterministic adjective
-  // gate rides INSIDE the verify loop — a mismatch is a critical issue the
-  // regen machinery repairs, exactly like a wrong figure.
+  // Deterministic code gates ride INSIDE the verify loop — a mismatch is a
+  // critical issue the regen machinery repairs, exactly like a wrong figure:
+  // - July 17: holdco discount adjectives trace to the computed class.
+  // - July 18 rule 4: price ÷ per-share ≡ printed multiple; ONE conviction.
+  // - July 18 rule 5: self-corrected contradictions are build failures.
   const discountSignal = args.review ? null : holdcoDiscountSignal(args.holdco);
-  const wordGate = (markdown: string): { claim: string; problem: string }[] =>
-    discountSignal
-      ? holdcoAdjectiveIssues(markdown, discountSignal.discountClass, discountSignal.discountPct).map((p) => ({
+  const reconInputs = gateSnapshot
+    ? snapshotReconcileInputs(gateSnapshot, args.conviction ?? null, args.peerComps)
+    : null;
+  const wordGate = (markdown: string): { claim: string; problem: string }[] => {
+    const out: { claim: string; problem: string }[] = [];
+    if (discountSignal) {
+      out.push(
+        ...holdcoAdjectiveIssues(markdown, discountSignal.discountClass, discountSignal.discountPct).map((p) => ({
           claim: "valuation adjective",
           problem: p,
-        }))
-      : [];
+        })),
+      );
+    }
+    if (reconInputs) {
+      out.push(...reconciliationIssues(markdown, reconInputs).map((p) => ({ claim: "reconciliation", problem: p })));
+      out.push(...narrationIssues(markdown).map((p) => ({ claim: "self-corrected contradiction", problem: p })));
+    }
+    return out;
+  };
   const withWordGate = (v: VerificationResult, markdown: string): VerificationResult => {
     const word = wordGate(markdown);
     return word.length === 0 ? v : { ...v, passed: false, critical_issues: [...v.critical_issues, ...word] };
@@ -487,6 +511,18 @@ export async function generateVerifiedMemo(args: {
     );
   }
   let meta = await extractMemoMeta(memo.markdown);
+  // ONE conviction (July 18 rule 4): the assessor's number is the desk's —
+  // the meta extractor must not invent its own (the RNR email said 4/10
+  // while the PDF said 5/10). Body prose is gated in the loop above; the
+  // meta field is ours to set.
+  if (meta && typeof args.conviction === "number") {
+    if (meta.conviction !== args.conviction) {
+      console.warn(
+        `Meta conviction ${meta.conviction}/10 != desk's ${args.conviction}/10 for ${args.ticker} — overriding to the desk number.`,
+      );
+    }
+    meta = { ...meta, conviction: args.conviction };
+  }
   // Rule 5 (July 17): the meta rides to the reader (tear-sheet thesis line,
   // scenario box, cover fallback) — it passes the same word gate as the body,
   // on WHICHEVER discount basis is live (look-through or published).

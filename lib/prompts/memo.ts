@@ -78,6 +78,11 @@ export function buildMemoUserPrompt(args: {
   peerComps?: string;
   /** Investment-holdco NAV frame block (lib/holdco.ts holdcoPromptBlock). */
   holdcoBlock?: string;
+  /** True → float/deposit-funded balance sheet (bank, insurer): the equity-
+   * base rules apply and EV/net-debt/net-cash never appear. */
+  financialGroup?: boolean;
+  /** The desk's ONE conviction — printed identically everywhere it appears. */
+  conviction?: number | null;
 }): string {
   const { profile, ticker, companyName, data, today, selectionRationale } = args;
 
@@ -213,6 +218,18 @@ ${
   }${briefBlock}${portfolioBlock}${learningBlock}${coverageBlock}${followupBlock}${secondLookBlock}${reviewBlock}${
     args.holdcoBlock
       ? `<holdco_valuation_frame note="This name is an INVESTMENT HOLDING COMPANY — the desk computed the NAV frame below. It overrides the default multiple framing.">\n${args.holdcoBlock}\n</holdco_valuation_frame>\n\n`
+      : ""
+  }${
+    args.financialGroup && !args.review
+      ? `<equity_base_rules note="this company runs a float/deposit-funded balance sheet (bank/insurer/fund-consolidator) — the client's own July 18 rules">
+- ONE equity snapshot: every book figure, multiple, and per-share value comes from the computed_figures equity bridge (common equity = total shareholders' equity − preferred; tangible common = − goodwill − intangibles). MINORITY INTEREST NEVER enters any per-share figure, multiple, or prose claim — consolidated third-party capital is not the shareholders' money.
+- NO enterprise value, NO net debt, NO "net cash" — the investment portfolio is FLOAT backing policyholder/depositor liabilities, not spare cash. If the cheapness needs explaining, it is the cycle or the returns, never a cash pile.
+- QUARANTINE, NOT NARRATION: if a figure you are writing contradicts the price or another figure on the page, STOP and take the correct value from computed_figures — never write "that number is actually above the stock, so I mean…". A contradiction noticed mid-sentence is a build failure.
+</equity_base_rules>\n\n`
+      : ""
+  }${
+    typeof args.conviction === "number"
+      ? `THE DESK'S CONVICTION IS ${args.conviction}/10 — anywhere conviction appears (verdict, prose, scenarios), it is exactly this number. Never restate it differently.\n\n`
       : ""
   }${
     args.review

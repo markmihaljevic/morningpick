@@ -5,6 +5,7 @@ import type { ComputedFigure } from "./figures";
 import type { KeyStat } from "./stats";
 import { verifyMemo } from "./verify";
 import { holdcoPromptBlock, holdcoAdjectiveIssues, holdcoDiscountSignal } from "./holdco";
+import { reconciliationIssues, narrationIssues } from "./reconcile";
 
 /**
  * Page one of the idea PDF: a one-page memo in the register of a Howard
@@ -165,6 +166,11 @@ export async function writePageOneMemo(args: {
   /** Investment-holdco NAV frame (July 17) — the page's valuation section
    * reads from the live discount; the fact-check gets the computed bridge. */
   holdco?: import("./holdco").HoldcoContext | null;
+  /** July 18 rule 4: reconciliation inputs (equity snapshot basis + the
+   * desk's one conviction) — price ÷ per-share must equal every printed
+   * multiple, and any N/10 must be the desk's. */
+  reconcile?: import("./reconcile").ReconcileInputs | null;
+  financialGroup?: boolean;
 }): Promise<PageOneMemo | null> {
   const cfg = config();
   const stripLine = args.strip.map((s) => `${s.label}: ${s.value}`).join(" | ");
@@ -238,14 +244,20 @@ export async function writePageOneMemo(args: {
           // The writer's contract says full-note figures are valid — the
           // checker must SEE that note or it disputes legitimate reuse.
           referenceNote: args.fullNoteMarkdown,
+          financialGroup: args.financialGroup,
         },
       );
-      // Rule 5: the page's discount words must match the computed class —
-      // on whichever basis is live (look-through or dated published NAV).
+      // Deterministic gates: discount words match the computed class (July
+      // 17), figures reconcile and conviction is the desk's one number
+      // (July 18 rule 4), contradictions are never narrated (rule 5).
       const signal = holdcoDiscountSignal(args.holdco);
       const wordIssues = signal
         ? holdcoAdjectiveIssues(pageText, signal.discountClass, signal.discountPct)
         : [];
+      if (args.reconcile) {
+        wordIssues.push(...reconciliationIssues(pageText, args.reconcile));
+        wordIssues.push(...narrationIssues(pageText));
+      }
       if (verification.passed && wordIssues.length === 0) return memo;
       verification.critical_issues.push(...wordIssues.map((p) => ({ claim: "valuation adjective", problem: p })));
       console.warn(

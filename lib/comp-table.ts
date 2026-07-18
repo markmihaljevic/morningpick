@@ -1,6 +1,5 @@
-import compMetrics from "./comp-metrics-v1.json";
 import { fmpGet, fetchLatestBalanceSheet, type TickerData } from "./fmp";
-import { getPeerGroup, type SelectedPeer } from "./peer-select";
+import { getPeerGroup, dedupePeersByIdentity, looksScaffolded, type SelectedPeer } from "./peer-select";
 import { logEvent } from "./db";
 import {
   buildSnapshot,
@@ -20,47 +19,10 @@ import { finishSentence } from "./text";
  * cells print n/a (not found) or n/m (not meaningful), never a guess.
  */
 
-interface MetricDef {
-  label: string;
-  kind: "computed" | "filing" | "hybrid" | "sourced_only";
-  how: string;
-  rule: string;
-}
-interface GroupDef {
-  label: string;
-  columns: string[];
-  drop_first_if_tight?: string[];
-  optional_if_sourced?: string[];
-  stage_rule?: string;
-  clean_comp_rule?: string;
-  pitfalls?: string;
-}
-
-const METRICS = compMetrics.metrics as Record<string, MetricDef>;
-const GROUPS = compMetrics.groups as Record<string, GroupDef>;
-const INDUSTRY_TO_GROUP = compMetrics.industry_to_group as Record<string, string>;
-const SECTOR_FALLBACK = compMetrics.sector_fallback as Record<string, string>;
-const DEFAULT_GROUP = compMetrics.default_group as string;
-
-export interface GroupResolution {
-  key: string;
-  group: GroupDef;
-  via: "industry" | "sector" | "default" | "holdco-detection";
-}
-
-/** Resolution order per the file: industry (exact) → sector → default, logged. */
-export function resolveMetricGroup(
-  industry: string | undefined,
-  sector: string | undefined,
-): GroupResolution {
-  if (industry && INDUSTRY_TO_GROUP[industry]) {
-    return { key: INDUSTRY_TO_GROUP[industry], group: GROUPS[INDUSTRY_TO_GROUP[industry]], via: "industry" };
-  }
-  if (sector && SECTOR_FALLBACK[sector]) {
-    return { key: SECTOR_FALLBACK[sector], group: GROUPS[SECTOR_FALLBACK[sector]], via: "sector" };
-  }
-  return { key: DEFAULT_GROUP, group: GROUPS[DEFAULT_GROUP], via: "default" };
-}
+// Group machinery lives in lib/metric-groups.ts (figures.ts needs it too and
+// must never import this module — cycle). Re-exported for existing callers.
+import { METRICS, GROUPS, resolveMetricGroup, type GroupDef } from "./metric-groups";
+export { resolveMetricGroup, type GroupResolution } from "./metric-groups";
 
 export interface CompTableRow {
   name: string;
@@ -348,13 +310,27 @@ export async function buildCompTable(args: {
     const fullProfile = profile as
       | { industry?: string; sector?: string; companyName?: string; description?: string }
       | undefined;
-    const peerGroup = await getPeerGroup({
+    const rawPeerGroup = await getPeerGroup({
       ticker: args.ticker,
       companyName: args.companyName ?? fullProfile?.companyName,
       industry: fullProfile?.industry,
       sector: fullProfile?.sector,
       description: fullProfile?.description,
     });
+    // Print-side hygiene (July 18 P.S.): cached peer_groups rows live 183
+    // days and predate the pick-time filters — a cached RNR set carried the
+    // literal word "placeholder" and Everest twice (EG + legacy RE). Never
+    // render scaffolding; one row per company identity.
+    const peerGroup = await dedupePeersByIdentity(
+      args.ticker,
+      rawPeerGroup.filter((p) => {
+        if (looksScaffolded(p)) {
+          console.warn(`Cached peer ${p.ticker} (for ${args.ticker}) is scaffolding — not rendered.`);
+          return false;
+        }
+        return true;
+      }),
+    );
     if (peerGroup.length < 2) {
       console.warn(`No usable peer group for ${args.ticker} — comp table skipped.`);
       return null;

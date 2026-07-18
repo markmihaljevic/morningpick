@@ -2,6 +2,7 @@ import { anthropic } from "./anthropic";
 import { config } from "./config";
 import type { MemoMeta } from "./memo";
 import { holdcoAdjectiveIssues, DISCOUNT_CLASS_PHRASE } from "./holdco";
+import { reconciliationIssues, narrationIssues } from "./reconcile";
 
 /**
  * The short cover note that IS the morning email, written AS IF FROM MEMORY,
@@ -173,6 +174,9 @@ export async function writeCoverNote(args: {
   /** Investment holdco (July 17): the email's valuation words must read from
    * the computed live discount — same class as thesis and body. */
   holdco?: { discountPct: number; discountClass: import("./holdco").DiscountClass } | null;
+  /** July 18 rule 4: any figure appearing in both email and PDF must match —
+   * per-share book figures, book multiples, and the conviction score. */
+  reconcile?: import("./reconcile").ReconcileInputs | null;
 }): Promise<CoverNote | null> {
   const cfg = config();
   const att = args.attachments ?? { onePager: true, fullReport: true };
@@ -269,6 +273,13 @@ export async function writeCoverNote(args: {
         issues.push(
           ...holdcoAdjectiveIssues(`${subject}\n${body}`, args.holdco.discountClass, args.holdco.discountPct),
         );
+      }
+      // July 18 rule 4: email and PDF must agree — book figures reconcile to
+      // the same snapshot, conviction is the desk's one number; and rule 5:
+      // contradictions are never narrated.
+      if (args.reconcile) {
+        issues.push(...reconciliationIssues(`${subject}\n${body}`, args.reconcile));
+        issues.push(...narrationIssues(body));
       }
       if (issues.length === 0) return { subject, body };
       console.warn(`Cover-note register issues (attempt ${attempt + 1}):`, issues);

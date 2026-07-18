@@ -61,7 +61,8 @@ const VERIFY_SYSTEM = `You are a fact-checker for an investment memo before it i
 - Flag as MINOR: rounding beyond ~2%, vague attribution.
 - REVIEW ACTION DISCIPLINE (a further exception to numbers-only): when the user message contains a <review_action_rules> block, this memo is a book review and that block's checks ARE in scope — apply them exactly as written and report violations as CRITICAL issues. This is the desk's standing discipline for reviews, not a style opinion.
 - HOLDCO NAV FRAME (a further exception to numbers-only): when the user message contains a <holdco_nav_frame> block, its computed values are ground truth and its framing checks ARE in scope — apply them exactly as written and report violations as CRITICAL issues. Words must trace to computed figures: a "wide discount" above a computed near-NAV gap is as wrong as a bad number.
-Do not otherwise comment on investment logic, style, or opinions — numbers against the dataset, plus the attribution check and any <review_action_rules> or <holdco_nav_frame> block above.`;
+- EQUITY BASE (a further exception to numbers-only): when the user message contains an <equity_base_rules> block, this is a float/deposit-funded financial and that block's checks ARE in scope — apply them exactly as written and report violations as CRITICAL issues.
+Do not otherwise comment on investment logic, style, or opinions — numbers against the dataset, plus the attribution check and any <review_action_rules>, <holdco_nav_frame>, or <equity_base_rules> block above.`;
 
 /** Audit a memo's figures against the grounding dataset. Fail-open on errors. */
 export async function verifyMemo(
@@ -78,6 +79,8 @@ export async function verifyMemo(
     /** An ALREADY-VERIFIED source note the memo distils (page one's contract
      * lets the writer reuse its figures) — a figure present here is valid. */
     referenceNote?: string;
+    /** True → float/deposit-funded balance sheet: the equity-base rules apply. */
+    financialGroup?: boolean;
   },
 ): Promise<VerificationResult> {
   // Review-only discipline (John, July 14) rides in the USER message so the
@@ -119,6 +122,9 @@ export async function verifyMemo(
               : "") +
             (opts?.referenceNote
               ? `<verified_source_note note="the ALREADY fact-checked note this memo distils — a figure that appears in it is VALID even when the dataset lacks it; do not dispute figures you can see here.">\n${opts.referenceNote}\n</verified_source_note>\n\n`
+              : "") +
+            (opts?.financialGroup
+              ? `<equity_base_rules note="this company runs a FLOAT/DEPOSIT-funded balance sheet (bank/insurer/fund-consolidator) — IN-SCOPE checks per the review-discipline exception. Flag as CRITICAL: (a) ANY enterprise-value, net-debt, or net-cash claim — the investment portfolio backs policyholder/depositor liabilities and is never netable cash; (b) any book multiple or per-share book figure that contradicts the computed_figures equity bridge (common equity excludes preferred; minority interest NEVER enters any figure — a per-share value derived from total equity including minority interest is the exact defect this rule exists to catch); (c) the same page carrying two different book bases without one being explicitly labeled the preferred-in aside; (d) self-corrected contradictions ('that figure is actually above the stock, so…') — a noticed contradiction is a build failure, not prose.">\n</equity_base_rules>\n\n`
               : "") +
             reviewRules +
             `<memo>\n${markdown}\n</memo>`,
