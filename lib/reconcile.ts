@@ -20,15 +20,27 @@ const PAST_MARKER =
 // explicitly allows ("re-rating from 0.71x to 1.0x book").
 // NOTE: deliberately does NOT include "trades at" — the subject's own claims
 // use that phrasing ("trades at 0.84x tangible book" was the shipped bug).
+// Scenario markers (bull/bear/base/worth/sale) exempt too: "worth 1.8x
+// tangible book in a sale" is mandated scenario math, not a live claim.
 const RELATIVE_CONTEXT =
-  /\b(peer|peers|versus|vs\.?|against|compare[ds]?|sector|median|average|re-?rat(e|ing)|toward|target)\b/i;
+  /\b(peer|peers|versus|vs\.?|against|compare[ds]?|sector|median|average|re-?rat(e|ing)|toward|target|bull|bear|base case|scenario|worth|in a (sale|takeout|wind-?down|run-?off))\b/i;
 
 // Book-context words for the dollars-per-share check; the exclusion list
-// keeps EPS, dividends, price targets, NAV, and cash-flow per-share out.
+// keeps EPS, dividends, cash, buybacks, price targets, NAV, and cash-flow
+// per-share out of a book-figure check.
 const BOOK_CONTEXT = /\b(tangible|book|equity|TBV|TCE)\b/i;
-const NON_BOOK_PER_SHARE = /\b(EPS|earn|earnings|dividend|payout|target|NAV|FCF|free cash|cash flow|revenue|sales|premium)\b/i;
+const NON_BOOK_PER_SHARE =
+  /\b(EPS|earn|earnings|dividend|payout|target|NAV|FCF|free cash|cash flow|cash|net cash|buyback|repurchas\w*|revenue|sales|premium)\b/i;
 
-const roundingTolerance = (printed: number): number => Math.max(0.02, Math.abs(printed) * 0.03);
+// Tolerance must cover the pipeline's OWN printed precision: fmtX prints one
+// decimal, so "0.8x" legitimately stands for anything in [0.75, 0.85) — a 3%
+// band rejected ~half of correctly-rounded quotes below 1.7x and would have
+// blocked sends on verbatim quotes of our own computed_figures.
+const roundingTolerance = (printedRaw: string, printed: number): number => {
+  const decimals = (printedRaw.split(".")[1] ?? "").length;
+  const halfWidth = 0.5 * Math.pow(10, -decimals) + 1e-9;
+  return Math.max(halfWidth, Math.abs(printed) * 0.03);
+};
 
 export interface ReconcileInputs {
   /** Price in REPORTED currency (priceRep basis — the same basis as the
@@ -98,17 +110,29 @@ export function reconciliationIssues(text: string, inputs: ReconcileInputs): str
     [...(inputs.peerCompsText ?? "").matchAll(/(\d+(?:\.\d+)?)x/gi)].map((m) => m[1]),
   );
 
+  // The price itself legitimately appears beside book figures ("at $323 a
+  // share you pay 1.6x tangible book") — accept it alongside the book bases.
+  const acceptedPerShare = [...knownPerShare, ...(inputs.priceReported !== null ? [inputs.priceReported] : [])];
+
   for (const sentence of sentences) {
     if (PAST_MARKER.test(sentence)) continue;
 
     // (a) dollars-per-share figures in BOOK context must match a snapshot
-    // per-share value — the $383.51 class.
-    if (BOOK_CONTEXT.test(sentence) && !NON_BOOK_PER_SHARE.test(sentence) && knownPerShare.length > 0) {
-      for (const m of sentence.matchAll(/[$£€]\s?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(?:\/|a |per )share|\b(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(?:\/|a |per )share/gi)) {
-        const raw = (m[1] ?? m[2] ?? "").replace(/,/g, "");
+    // per-share value or the price — the $383.51 class. Both adjacency
+    // orders: "$384 a share" AND "per share stands at $383.51". Pence-
+    // suffixed amounts are skipped (listing-minor units cannot be compared
+    // to reported-currency bases deterministically).
+    if (BOOK_CONTEXT.test(sentence) && !NON_BOOK_PER_SHARE.test(sentence) && acceptedPerShare.length > 0) {
+      const perShareMatches = [
+        ...sentence.matchAll(/[$£€]\s?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(?:\/|a |per )share/gi),
+        ...sentence.matchAll(/\b(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(?:\/|a |per )share/gi),
+        ...sentence.matchAll(/(?:\/|a |per |per-)share[^.\n]{0,30}?[$£€]\s?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)(?!\s?p\b)/gi),
+      ];
+      for (const m of perShareMatches) {
+        const raw = (m[1] ?? "").replace(/,/g, "");
         const v = parseFloat(raw);
         if (!Number.isFinite(v) || v <= 0) continue;
-        const matches = knownPerShare.some((k) => Math.abs(v - k) <= Math.max(1, k * 0.03));
+        const matches = acceptedPerShare.some((k) => Math.abs(v - k) <= Math.max(1, k * 0.03));
         if (!matches) {
           issues.push(
             `Per-share book figure "${m[0].trim()}" matches NO computed equity base (book/share ${knownPerShare
@@ -120,18 +144,27 @@ export function reconciliationIssues(text: string, inputs: ReconcileInputs): str
     }
 
     // (b) book multiples must equal price / per-share within rounding — the
-    // "1.5x tangible book ... $383.51 against $323" class. Peer multiples and
-    // re-rating language are exempt; round targets stay exempt via context.
-    if (BOOK_CONTEXT.test(sentence) && !RELATIVE_CONTEXT.test(sentence)) {
-      for (const m of sentence.matchAll(/(\d+(?:\.\d+)?)x/gi)) {
-        const printed = parseFloat(m[1]);
+    // "1.5x tangible book ... $383.51 against $323" class. LOCAL context
+    // only: the multiple must be labeled as a book multiple by its adjacent
+    // words — "8x earnings and 1.1x book" must test only the 1.1x (testing
+    // every Nx token in a book-mentioning sentence flagged mandated P/E and
+    // FCF multiples). Peer multiples and scenario language stay exempt.
+    if (!RELATIVE_CONTEXT.test(sentence) && knownMultiples.length > 0) {
+      const bookMultiples = [
+        // "1.6x tangible book", "0.8x book value", "1.5x TBV/TCE"
+        ...sentence.matchAll(/(\d+(?:\.\d+)?)x\s*(?:\(on[^)]*\)\s*)?(?:its\s+|the\s+)?(?:tangible\s+(?:common\s+)?(?:book|equity)|book(?:\s+value)?|TBV|TCE|common\s+equity)/gi),
+        // "tangible book at 1.6x", "book multiple of 0.8x"
+        ...sentence.matchAll(/(?:tangible\s+(?:common\s+)?(?:book|equity)|book(?:\s+value)?|TBV|TCE)[^.\n]{0,25}?(\d+(?:\.\d+)?)x/gi),
+      ];
+      for (const m of bookMultiples) {
+        const raw = m[1];
+        const printed = parseFloat(raw);
         if (!Number.isFinite(printed) || printed <= 0) continue;
-        if (peerMultiples.has(m[1])) continue;
-        if (knownMultiples.length === 0) continue;
-        const matches = knownMultiples.some((k) => Math.abs(printed - k) <= roundingTolerance(printed));
+        if (peerMultiples.has(raw)) continue;
+        const matches = knownMultiples.some((k) => Math.abs(printed - k) <= roundingTolerance(raw, printed));
         if (!matches) {
           issues.push(
-            `Book multiple "${m[0]}" does not reconcile to price ÷ any computed equity base (computed: ${knownMultiples
+            `Book multiple "${raw}x" does not reconcile to price ÷ any computed equity base (computed: ${knownMultiples
               .map((k) => `${k.toFixed(2)}x`)
               .join(", ")}). Recompute — the multiple and the per-share must come from the same snapshot.`,
           );
